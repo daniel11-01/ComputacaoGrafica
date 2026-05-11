@@ -12,6 +12,9 @@ document.addEventListener('DOMContentLoaded', Start);
 // --- Sem. 0/1: Variáveis globais (cena, câmara, renderer, relógio) ---
 var cena = new THREE.Scene();
 var camaraPerspetiva = new THREE.PerspectiveCamera(60, 4 / 3, 0.1, 1000);
+var camaraOrtografica;
+var cameraAtiva;
+var modoCamara = 'perspetiva';
 var renderer = new THREE.WebGLRenderer({ antialias: true });
 var relogio = new THREE.Clock();
 
@@ -37,6 +40,8 @@ document.body.appendChild(renderer.domElement);
 // Sem. 0/1: Posição inicial da câmara perspetiva
 camaraPerspetiva.position.set(25, 12, 10);
 camaraPerspetiva.lookAt(0, 3, 0);
+inicializarCameraOrtografica();
+cameraAtiva = camaraPerspetiva;
 
 // --- Sem. 4: Estado do teclado WASD ---
 var teclasPremidas = { w: false, a: false, s: false, d: false };
@@ -60,8 +65,29 @@ var presetsCamara = {
 
 var labelVista = document.createElement('div');
 labelVista.style.cssText = 'position:fixed;top:10px;left:10px;background:rgba(0,0,0,0.7);color:#fff;padding:8px 16px;font-family:monospace;font-size:14px;border-radius:6px;z-index:100;pointer-events:none;';
-labelVista.textContent = 'Vista: Vista geral (3/4) — Teclas 1-8 para mudar';
+labelVista.textContent = 'Vista: Vista geral (3/4) — Teclas 1-8 para mudar, O/0 para alternar câmara';
 document.body.appendChild(labelVista);
+
+function inicializarCameraOrtografica() {
+    var largura = window.innerWidth - 15;
+    var altura = window.innerHeight - 100;
+    var aspect = largura / altura;
+    var frustumSize = 18;
+
+    camaraOrtografica = new THREE.OrthographicCamera(
+        -frustumSize * aspect,
+         frustumSize * aspect,
+         frustumSize,
+        -frustumSize,
+         0.1,
+       200
+    );
+
+    camaraOrtografica.position.set(30, 12, 0);
+    camaraOrtografica.up.set(0, 1, 0);
+    camaraOrtografica.lookAt(0, 3, 0);
+    camaraOrtografica.updateProjectionMatrix();
+}
 
 function aplicarPresetCamara(tecla) {
     var preset = presetsCamara[tecla];
@@ -71,23 +97,44 @@ function aplicarPresetCamara(tecla) {
     camaraPerspetiva.position.set(preset.pos[0], preset.pos[1], preset.pos[2]);
     camaraPerspetiva.lookAt(preset.alvo[0], preset.alvo[1], preset.alvo[2]);
     vistaAtual = preset.nome;
-    labelVista.textContent = 'Vista: ' + preset.nome + ' — Teclas 1-8 | C = Follow Sonic';
+    atualizarLabelVista();
+}
+
+function atualizarLabelVista() {
+    if (modoCamara === 'ortografica') {
+        labelVista.textContent = 'Vista: Side-scroll ortográfica — Teclas O/0 para alternar câmara';
+    } else {
+        labelVista.textContent = 'Vista: ' + vistaAtual + ' — Teclas 1-8 para mudar, O/0 para alternar câmara';
+    }
+}
+
+function alternarModoCamara() {
+    if (modoCamara === 'perspetiva') {
+        modoCamara = 'ortografica';
+        cameraAtiva = camaraOrtografica;
+    } else {
+        modoCamara = 'perspetiva';
+        cameraAtiva = camaraPerspetiva;
+    }
+    atualizarLabelVista();
 }
 
 document.addEventListener('keydown', function(evento) {
-    var tecla = evento.key.toLowerCase();
-    // Sem. 4: presets de câmara
-    if (presetsCamara[evento.key]) {
-        aplicarPresetCamara(evento.key);
+    var tecla = evento.key;
+    if (presetsCamara[tecla]) {
+        aplicarPresetCamara(tecla);
+    } else if (tecla === 'o' || tecla === 'O' || tecla === '0') {
+        alternarModoCamara();
     }
     // Sem. 4: ativar câmara follow
-    if (tecla === 'c') {
+    if (tecla.toLowerCase() === 'c') {
         modoSeguirSonic = true;
         vistaAtual = 'Follow Sonic';
         labelVista.textContent = 'Vista: Follow Sonic — WASD para mover | 1-8 para presets';
     }
     // Sem. 4: registar teclas WASD premidas
-    if (teclasPremidas.hasOwnProperty(tecla)) teclasPremidas[tecla] = true;
+    var teclaLower = tecla.toLowerCase();
+    if (teclasPremidas.hasOwnProperty(teclaLower)) teclasPremidas[teclaLower] = true;
     // Sem. 4: alternar modo bola (Espaço)
     if (evento.code === 'Space' && sonicPlaceholder && sonicBola) {
         modoBola = !modoBola;
@@ -1017,6 +1064,7 @@ function criarSonicPlaceholder() {
 // --- Sem. 3: Elementos clássicos (Mola, Checkpoint, Ponte, Flores, Picos, Placa) ---
 
 var elementosNivel = [];
+var areasColisao = [];
 
 // Mola / Spring: CylinderGeometry base + SphereGeometry topo amarelo
 function criarMola(x, y, z) {
@@ -1198,34 +1246,62 @@ function criarPlacaFinal(x, y, z) {
 }
 
 // Picos / Spikes: ConeGeometry afiados
-function criarPicos(x, y, z, numPicos) {
+function criarPicos(x, y, z, opcoes) {
     var grupo = new THREE.Group();
-    numPicos = numPicos || 3;
+    var numPicos = 3;
+    var largura = null;
+
+    if (typeof opcoes === 'number') {
+        numPicos = opcoes || 3;
+        largura = numPicos * 0.7 + 0.4;
+    } else if (typeof opcoes === 'object' && opcoes !== null) {
+        largura = opcoes.largura || 0;
+        numPicos = opcoes.numPicos || 3;
+        if (largura <= 0) {
+            largura = numPicos * 0.7 + 0.4;
+        }
+    } else {
+        largura = numPicos * 0.7 + 0.4;
+    }
 
     var materialPico = new THREE.MeshStandardMaterial({ color: 0xbbbbbb, roughness: 0.15, metalness: 0.9 });
     var materialBasePico = new THREE.MeshStandardMaterial({ color: 0xcc3333, roughness: 0.4 });
+    var materialColisao = new THREE.MeshBasicMaterial({ visible: false });
 
-    // Base vermelha
+    // Base vermelha contínua que ocupa toda a largura definida
     var basePicos = new THREE.Mesh(
-        new THREE.BoxGeometry(numPicos * 0.7 + 0.4, 0.2, 0.8),
+        new THREE.BoxGeometry(largura, 0.2, 0.8),
         materialBasePico
     );
     basePicos.position.y = 0.1;
     basePicos.receiveShadow = true;
     grupo.add(basePicos);
 
+    var passo = numPicos > 1 ? largura / (numPicos - 1) : 0;
+    var xInicio = -largura / 2;
+
     for (var p = 0; p < numPicos; p++) {
         var pico = new THREE.Mesh(
             new THREE.ConeGeometry(0.2, 1.0, 8),
             materialPico
         );
-        pico.position.set(p * 0.7 - (numPicos - 1) * 0.35, 0.7, 0);
+        pico.position.set(xInicio + p * passo, 0.7, 0);
         pico.castShadow = true;
         grupo.add(pico);
     }
 
+    // Colisor invisível que cobre toda a área de picos
+    var colisorPicos = new THREE.Mesh(
+        new THREE.BoxGeometry(largura, 0.8, 0.8),
+        materialColisao
+    );
+    colisorPicos.position.set(0, 0.4, 0);
+    colisorPicos.userData = { tipo: 'picos', largura: largura, profundidade: 0.8 };
+    grupo.add(colisorPicos);
+
     grupo.position.set(x, y, z);
-    elementosNivel.push({ grupo: grupo, tipo: 'picos' });
+    elementosNivel.push({ grupo: grupo, tipo: 'picos', colisao: colisorPicos });
+    areasColisao.push(colisorPicos);
     cena.add(grupo);
     return grupo;
 }
@@ -1233,6 +1309,10 @@ function criarPicos(x, y, z, numPicos) {
 // Posicionamento dos elementos clássicos ao longo do nível
 function criarElementosNivel() {
     var y = 0.35;
+
+    // Obstáculos na primeira plataforma: Mola ajustada antes da barreira de picos
+    criarMola(0, y, 24); // Mola vermelha imediatamente antes dos picos
+    criarPicos(0, y, 19, { largura: 12, numPicos: 18 }); // Barreira de picos ocupa toda a largura da plataforma
 
     // Molas, Checkpoints, Ponte, Picos, Placa final
     [[0,28],[3,10],[-3,-20],[0,-30]].forEach(function(p){ criarMola(p[0], y, p[1]); });
@@ -1265,8 +1345,19 @@ function atualizarDimensoes() {
     var altura = window.innerHeight - 100;
 
     renderer.setSize(largura, altura);
+
     camaraPerspetiva.aspect = largura / altura;
     camaraPerspetiva.updateProjectionMatrix();
+
+    if (camaraOrtografica) {
+        var frustumSize = 18;
+        var aspect = largura / altura;
+        camaraOrtografica.left = -frustumSize * aspect;
+        camaraOrtografica.right = frustumSize * aspect;
+        camaraOrtografica.top = frustumSize;
+        camaraOrtografica.bottom = -frustumSize;
+        camaraOrtografica.updateProjectionMatrix();
+    }
 }
 
 // --- Sem. 0/1 + Sem. 2 + Sem. 4: Loop principal (animações + render) ---
@@ -1314,10 +1405,18 @@ function loop() {
     }
 
     for (var n = 0; n < nuvens.length; n++) {
-        nuvens[n].position.x += delta * (0.4 + n * 0.08);
-
-        if (nuvens[n].position.x > 40) {
-            nuvens[n].position.x = -40;
+        if (modoCamara === 'ortografica') {
+            // No modo 2D, nuvens se movem para o lado contrário (esquerda)
+            nuvens[n].position.x -= delta * (0.4 + n * 0.08);
+            if (nuvens[n].position.x < -40) {
+                nuvens[n].position.x = 40;
+            }
+        } else {
+            // Modo 3D normal
+            nuvens[n].position.x += delta * (0.4 + n * 0.08);
+            if (nuvens[n].position.x > 40) {
+                nuvens[n].position.x = -40;
+            }
         }
     }
 
@@ -1382,21 +1481,22 @@ function loop() {
         onda.material.opacity = opacidade;
     }
 
-    // --- Sem. 4: Câmara de acompanhamento (3ª pessoa) ou preset fixo ---
-    var alvoSeguir = (modoBola && sonicBola) ? sonicBola : sonicPlaceholder;
-    if (modoSeguirSonic && alvoSeguir) {
-        var sp = alvoSeguir.position;
-        var alvoPos = new THREE.Vector3(sp.x, sp.y + 6, sp.z + 14);
-        camaraPerspetiva.position.lerp(alvoPos, 0.08);
-        camaraPerspetiva.lookAt(sp.x, sp.y + 1, sp.z);
-    } else {
-        var preset = presetsCamara[Object.keys(presetsCamara).find(function(k) {
-            return presetsCamara[k].nome === vistaAtual;
-        })] || presetsCamara['1'];
-        camaraPerspetiva.lookAt(preset.alvo[0], preset.alvo[1], preset.alvo[2]);
+    if (modoCamara === 'perspetiva') {
+        var alvoSeguir = (modoBola && sonicBola) ? sonicBola : sonicPlaceholder;
+        if (modoSeguirSonic && alvoSeguir) {
+            var sp = alvoSeguir.position;
+            var alvoPos = new THREE.Vector3(sp.x, sp.y + 6, sp.z + 14);
+            camaraPerspetiva.position.lerp(alvoPos, 0.08);
+            camaraPerspetiva.lookAt(sp.x, sp.y + 1, sp.z);
+        } else {
+            var preset = presetsCamara[Object.keys(presetsCamara).find(function(k) {
+                return presetsCamara[k].nome === vistaAtual;
+            })] || presetsCamara['1'];
+            camaraPerspetiva.lookAt(preset.alvo[0], preset.alvo[1], preset.alvo[2]);
+        }
     }
 
-    renderer.render(cena, camaraPerspetiva);
+    renderer.render(cena, cameraAtiva);
     requestAnimationFrame(loop);
 }
 
