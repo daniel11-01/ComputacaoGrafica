@@ -4,6 +4,8 @@
 // ============================================================
 
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+var carregadorGLTF = new GLTFLoader();
 
 document.addEventListener('DOMContentLoaded', Start);
 
@@ -16,7 +18,7 @@ var relogio = new THREE.Clock();
 // Referências para objetos do cenário
 var chao, sol, nuvens = [];
 var aneisDecorativos = [], grupoLooping, vegetacao = [], palmeiras = [];
-var sonicPlaceholder, oceano, espumaOndas = [];
+var sonicPlaceholder, sonicBola, modoBola = false, oceano, espumaOndas = [];
 
 // Sem. 3: TextureLoader para carregar texturas externas
 var carregadorTexturas = new THREE.TextureLoader();
@@ -35,6 +37,12 @@ document.body.appendChild(renderer.domElement);
 // Sem. 0/1: Posição inicial da câmara perspetiva
 camaraPerspetiva.position.set(25, 12, 10);
 camaraPerspetiva.lookAt(0, 3, 0);
+
+// --- Sem. 4: Estado do teclado WASD ---
+var teclasPremidas = { w: false, a: false, s: false, d: false };
+
+// --- Sem. 4: Modo câmara follow ---
+var modoSeguirSonic = false;
 
 // --- Presets de câmara (teclas 1-8) ---
 var vistaAtual = 'Vista geral (3/4)';
@@ -58,18 +66,40 @@ document.body.appendChild(labelVista);
 function aplicarPresetCamara(tecla) {
     var preset = presetsCamara[tecla];
     if (!preset) return;
-
+    // Sem. 4: desativar follow ao usar preset manual
+    modoSeguirSonic = false;
     camaraPerspetiva.position.set(preset.pos[0], preset.pos[1], preset.pos[2]);
     camaraPerspetiva.lookAt(preset.alvo[0], preset.alvo[1], preset.alvo[2]);
     vistaAtual = preset.nome;
-    labelVista.textContent = 'Vista: ' + preset.nome + ' — Teclas 1-8 para mudar';
+    labelVista.textContent = 'Vista: ' + preset.nome + ' — Teclas 1-8 | C = Follow Sonic';
 }
 
 document.addEventListener('keydown', function(evento) {
-    var tecla = evento.key;
-    if (presetsCamara[tecla]) {
-        aplicarPresetCamara(tecla);
+    var tecla = evento.key.toLowerCase();
+    // Sem. 4: presets de câmara
+    if (presetsCamara[evento.key]) {
+        aplicarPresetCamara(evento.key);
     }
+    // Sem. 4: ativar câmara follow
+    if (tecla === 'c') {
+        modoSeguirSonic = true;
+        vistaAtual = 'Follow Sonic';
+        labelVista.textContent = 'Vista: Follow Sonic — WASD para mover | 1-8 para presets';
+    }
+    // Sem. 4: registar teclas WASD premidas
+    if (teclasPremidas.hasOwnProperty(tecla)) teclasPremidas[tecla] = true;
+    // Sem. 4: alternar modo bola (Espaço)
+    if (evento.code === 'Space' && sonicPlaceholder && sonicBola) {
+        modoBola = !modoBola;
+        sonicPlaceholder.visible = !modoBola;
+        sonicBola.visible = modoBola;
+        sonicBola.position.copy(sonicPlaceholder.position);
+    }
+});
+
+document.addEventListener('keyup', function(evento) {
+    var tecla = evento.key.toLowerCase();
+    if (teclasPremidas.hasOwnProperty(tecla)) teclasPremidas[tecla] = false;
 });
 
 // --- Sem. 0/1: Textura xadrez (Canvas 2D, RepeatWrapping 8x8) ---
@@ -874,42 +904,114 @@ function criarAneis() {
     }
 }
 
-// --- Sem. 2: Placeholder do Sonic (Sphere + Cones + Boxes) ---
+// --- Sem. 2 + Sem. 4: Modelo do Sonic (hierarquia THREE.Group) ---
 function criarSonicPlaceholder() {
     sonicPlaceholder = new THREE.Group();
 
-    var materialAzul = new THREE.MeshStandardMaterial({ color: 0x1e5eff, roughness: 0.35 });
-    var materialVermelho = new THREE.MeshStandardMaterial({ color: 0xff2e2e, roughness: 0.35 });
-    var materialPele = new THREE.MeshStandardMaterial({ color: 0xffcc99, roughness: 0.5 });
+    // Materiais base
+    var matAzul    = new THREE.MeshStandardMaterial({ color: 0x1a6bff, roughness: 0.45, metalness: 0.05 });
+    var matAzulEsc = new THREE.MeshStandardMaterial({ color: 0x0d3fa6, roughness: 0.5,  metalness: 0.0  });
+    var matPele    = new THREE.MeshStandardMaterial({ color: 0xf5c98a, roughness: 0.65, metalness: 0.0  });
+    var matBranco  = new THREE.MeshStandardMaterial({ color: 0xf0f0f0, roughness: 0.55, metalness: 0.0  });
+    var matPreto   = new THREE.MeshStandardMaterial({ color: 0x0a0a0a, roughness: 0.4,  metalness: 0.1  });
+    var matVerm    = new THREE.MeshStandardMaterial({ color: 0xcc1111, roughness: 0.5,  metalness: 0.05 });
+    var matSola    = new THREE.MeshStandardMaterial({ color: 0x222222, roughness: 0.8,  metalness: 0.0  });
+    // Materiais reutilizados da cena (mesmo estilo dos anéis decorativos)
+    var matDourado = new THREE.MeshPhysicalMaterial({ color: 0xffcc33, metalness: 0.9, roughness: 0.12, reflectivity: 1.0, clearcoat: 0.3 });
+    var matBrancoBrilho = new THREE.MeshPhysicalMaterial({ color: 0xf8f8f8, metalness: 0.0, roughness: 0.25, clearcoat: 0.5 });
+    var matIris = new THREE.MeshStandardMaterial({ color: 0x228844, roughness: 0.3, metalness: 0.1 });
 
-    var corpo = new THREE.Mesh(new THREE.SphereGeometry(1, 32, 16), materialAzul);
-    corpo.castShadow = true;
-    sonicPlaceholder.add(corpo);
+    function add(mesh) { mesh.castShadow = true; mesh.receiveShadow = true; sonicPlaceholder.add(mesh); return mesh; }
+    function addTo(grupo, mesh) { mesh.castShadow = true; mesh.receiveShadow = true; grupo.add(mesh); return mesh; }
 
-    var barriga = new THREE.Mesh(new THREE.SphereGeometry(0.65, 24, 12), materialPele);
-    barriga.position.set(0, -0.1, 0.55);
-    sonicPlaceholder.add(barriga);
+    // === CORPO (menor, mais esguio) ===
+    var corpo = new THREE.Mesh(new THREE.SphereGeometry(0.65, 32, 24), matAzul);
+    corpo.scale.set(1.0, 1.25, 0.95); add(corpo);
 
-    for (var e = 0; e < 5; e++) {
-        var espinho = new THREE.Mesh(
-            new THREE.ConeGeometry(0.3, 1.2, 8),
-            materialAzul
-        );
-        espinho.position.set(0, 0.3 + e * 0.15, -0.6 - e * 0.25);
-        espinho.rotation.x = 0.8 + e * 0.15;
-        espinho.castShadow = true;
-        sonicPlaceholder.add(espinho);
-    }
+    // Barriga muito reduzida
+    var barriga = new THREE.Mesh(new THREE.SphereGeometry(0.42, 24, 16), matPele);
+    barriga.scale.set(0.85, 0.95, 0.40);
+    barriga.position.set(0, -0.05, 0.50); add(barriga);
 
-    for (var sx = -1; sx <= 1; sx += 2) {
-        var sapato = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.35, 0.9), materialVermelho);
-        sapato.position.set(sx * 0.4, -1.15, 0.15);
-        sapato.castShadow = true;
-        sonicPlaceholder.add(sapato);
-    }
+    // === CABEÇA — sonic_head.glb ===
+    carregadorGLTF.load('assets/sonic_head.glb', function(gltf) {
+        var cabecaGLB = gltf.scene;
+        cabecaGLB.scale.setScalar(0.028);
+        cabecaGLB.position.set(0.25, 0.30, 0);
+        cabecaGLB.traverse(function(node) {
+            if (node.isMesh) { node.castShadow = true; node.receiveShadow = true; }
+        });
+        sonicPlaceholder.add(cabecaGLB);
+    });
 
-    sonicPlaceholder.position.set(0, 1.85, 34);
+    // === BRAÇOS + LUVAS (nasce dentro do corpo para ligar visualmente) ===
+    [-1, 1].forEach(function(l) {
+        var gB = new THREE.Group();
+        // Braço começa dentro do corpo (parte superior enterrada no corpo azul)
+        var braco = new THREE.Mesh(new THREE.CylinderGeometry(0.10, 0.09, 1.0, 12), matAzul);
+        addTo(gB, braco);
+        var punho = new THREE.Mesh(new THREE.TorusGeometry(0.13, 0.032, 10, 20), matBrancoBrilho);
+        punho.rotation.x = Math.PI / 2;
+        punho.position.y = -0.52; addTo(gB, punho);
+        var luva = new THREE.Mesh(new THREE.SphereGeometry(0.28, 20, 14), matBrancoBrilho);
+        luva.scale.set(1.0, 0.9, 1.05);
+        luva.position.y = -0.66; addTo(gB, luva);
+        // Posicionar: x mais perto do corpo, y mais alto para enterrar topo do braço no corpo
+        gB.position.set(l * 0.68, 0.18, 0.05);
+        gB.rotation.z = l * 0.38;
+        sonicPlaceholder.add(gB);
+    });
+
+    // === PERNAS (nascem dentro da base do corpo) ===
+    [-1, 1].forEach(function(l) {
+        // Perna longa — topo enterrado na base do corpo
+        // Perna: comprimento 1.1, centro y=-1.25 → topo y=-0.70 (dentro corpo), fundo y=-1.80
+        var perna = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.10, 1.10, 12), matPele);
+        perna.position.set(l * 0.26, -1.25, 0.0); add(perna);
+    });
+
+    // === SAPATOS — sonic_sapatos.glb (já tem os 2 sapatos, carregar uma vez só) ===
+    // Perna fundo: y=-1.25-0.55=-1.80 → sapatos centrados em y=-1.95
+    // sonicPlaceholder.y=2.40 + (-1.95) = 0.45 → acima do chão (y=0.35)
+    carregadorGLTF.load('assets/sonic_sapatos.glb', function(gltf) {
+        var sapatos = gltf.scene;
+        // Escalar X maior para afastar os sapatos simetricamente
+        sapatos.scale.set(0.41, 0.24, 0.24);
+        sapatos.position.set(0, -1.92, 0.15);
+        sapatos.traverse(function(node) {
+            if (node.isMesh) { node.castShadow = true; node.receiveShadow = true; }
+        });
+        sonicPlaceholder.add(sapatos);
+    });
+
+    sonicPlaceholder.position.set(0, 2.40, 34);
     cena.add(sonicPlaceholder);
+
+    // === BOLA — sonic_bola.glb (ativada com Espaço) ===
+    sonicBola = new THREE.Group();
+    sonicBola.visible = false;
+    carregadorGLTF.load('assets/sonic_bola.glb', function(gltf) {
+        var bola = gltf.scene;
+        // Escala automática via bounding box
+        var box = new THREE.Box3().setFromObject(bola);
+        var size = new THREE.Vector3();
+        box.getSize(size);
+        var maxDim = Math.max(size.x, size.y, size.z);
+        var escalaAlvo = 1.4 / maxDim;
+        bola.scale.setScalar(escalaAlvo);
+        // Corrigir orientação do GLB (roda de lado → corrigir eixo)
+        bola.rotation.x = -Math.PI / 2;
+        // Calcular raio real após escala para assentar no chão
+        var raio = (size.y * escalaAlvo) / 2;
+        sonicBola.userData.raio = raio;
+        // Posicionar: terreno y=0.35 + raio
+        sonicBola.position.set(sonicPlaceholder.position.x, 0.35 + raio, sonicPlaceholder.position.z);
+        bola.traverse(function(node) {
+            if (node.isMesh) { node.castShadow = true; node.receiveShadow = true; }
+        });
+        sonicBola.add(bola);
+    }, undefined, function(err) { console.error('[sonic_bola] erro:', err); });
+    cena.add(sonicBola);
 }
 
 // --- Sem. 3: Elementos clássicos (Mola, Checkpoint, Ponte, Flores, Picos, Placa) ---
@@ -1167,11 +1269,45 @@ function atualizarDimensoes() {
     camaraPerspetiva.updateProjectionMatrix();
 }
 
-// --- Sem. 0/1 + Sem. 2: Loop principal (animações + render) ---
+// --- Sem. 0/1 + Sem. 2 + Sem. 4: Loop principal (animações + render) ---
 function loop() {
     var delta = relogio.getDelta();
 
     atualizarDimensoes();
+
+    // --- Sem. 4: Movimento do Sonic com WASD (ambos os modos) ---
+    if (sonicPlaceholder) {
+        var vel = 8 * delta;
+        var movX = 0, movZ = 0;
+        if (teclasPremidas.w) movZ -= vel;
+        if (teclasPremidas.s) movZ += vel;
+        if (teclasPremidas.a) movX -= vel;
+        if (teclasPremidas.d) movX += vel;
+        if (movX !== 0 || movZ !== 0) {
+            var nx = Math.max(-5, Math.min(5, sonicPlaceholder.position.x + movX));
+            var nz = Math.max(-36, Math.min(36, sonicPlaceholder.position.z + movZ));
+
+            sonicPlaceholder.position.x = nx;
+            sonicPlaceholder.position.z = nz;
+
+            if (sonicBola) {
+                sonicBola.position.x = nx;
+                sonicBola.position.z = nz;
+                var raio = sonicBola.userData.raio || 0.7;
+                sonicBola.position.y = 0.35 + raio;
+
+                if (modoBola) {
+                    // Rotação num eixo só (Z) para evitar gimbal lock
+                    var velocidadeRot = Math.sqrt(movX * movX + movZ * movZ);
+                    sonicBola.rotation.z += velocidadeRot * 5;
+                } else {
+                    sonicPlaceholder.rotation.y = Math.atan2(movX, movZ);
+                }
+            } else {
+                sonicPlaceholder.rotation.y = Math.atan2(movX, movZ);
+            }
+        }
+    }
 
     for (var i = 0; i < aneisDecorativos.length; i++) {
         aneisDecorativos[i].rotateY(delta * 2.5);
@@ -1246,11 +1382,19 @@ function loop() {
         onda.material.opacity = opacidade;
     }
 
-    // Re-aplicar lookAt para manter a orientação do preset ativo
-    var preset = presetsCamara[Object.keys(presetsCamara).find(function(k) {
-        return presetsCamara[k].nome === vistaAtual;
-    })] || presetsCamara['1'];
-    camaraPerspetiva.lookAt(preset.alvo[0], preset.alvo[1], preset.alvo[2]);
+    // --- Sem. 4: Câmara de acompanhamento (3ª pessoa) ou preset fixo ---
+    var alvoSeguir = (modoBola && sonicBola) ? sonicBola : sonicPlaceholder;
+    if (modoSeguirSonic && alvoSeguir) {
+        var sp = alvoSeguir.position;
+        var alvoPos = new THREE.Vector3(sp.x, sp.y + 6, sp.z + 14);
+        camaraPerspetiva.position.lerp(alvoPos, 0.08);
+        camaraPerspetiva.lookAt(sp.x, sp.y + 1, sp.z);
+    } else {
+        var preset = presetsCamara[Object.keys(presetsCamara).find(function(k) {
+            return presetsCamara[k].nome === vistaAtual;
+        })] || presetsCamara['1'];
+        camaraPerspetiva.lookAt(preset.alvo[0], preset.alvo[1], preset.alvo[2]);
+    }
 
     renderer.render(cena, camaraPerspetiva);
     requestAnimationFrame(loop);
