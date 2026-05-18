@@ -22,7 +22,9 @@ var relogio = new THREE.Clock();
 var chao, sol, nuvens = [];
 var aneisDecorativos = [], grupoLooping, vegetacao = [], palmeiras = [];
 var sonicPlaceholder, sonicBola, modoBola = false, oceano, espumaOndas = [];
-var ceu, ilhasDistantes = [], barco, gaivotas = [];
+var ceu, ilhasDistantes = [], barcos = [], gaivotas = [];
+// Passo 3: cache de materials partilhados para folhas de árvores
+var materiaisFolhas = {};
 
 // Sem. 3: TextureLoader para carregar texturas externas
 var carregadorTexturas = new THREE.TextureLoader();
@@ -44,29 +46,25 @@ camaraPerspetiva.lookAt(0, 3, 0);
 inicializarCameraOrtografica();
 cameraAtiva = camaraPerspetiva;
 
-// --- Sem. 4: Estado do teclado WASD ---
-var teclasPremidas = { w: false, a: false, s: false, d: false };
+// --- Sem. 4: Estado do teclado WASD (+ Shift/Ctrl para câmara livre) ---
+var teclasPremidas = { w: false, a: false, s: false, d: false, shift: false, control: false };
 
 // --- Sem. 4: Modo câmara follow ---
 var modoSeguirSonic = false;
 
-// --- Presets de câmara (teclas 1-8) ---
-var vistaAtual = 'Vista geral (3/4)';
+// --- Sem. 5: Modo câmara livre (WASD + Shift/Ctrl + arrastar rato) ---
+var modoCamaraLivre = false;
+var camLivreYaw = 0;
+var camLivrePitch = 0;
+var camLivreArrastando = false;
+var camLivreUltimoMouse = { x: 0, y: 0 };
 
-var presetsCamara = {
-    '1': { pos: [25, 12, 10],   alvo: [0, 3, 0],    nome: 'Vista geral (3/4)' },
-    '2': { pos: [30, 8, 0],     alvo: [0, 4, 0],    nome: 'Lado direito' },
-    '3': { pos: [-30, 8, 0],    alvo: [0, 4, 0],    nome: 'Lado esquerdo' },
-    '4': { pos: [0, 40, 1],     alvo: [0, 0, 0],    nome: 'Topo (vista aérea)' },
-    '5': { pos: [20, 8, 30],    alvo: [0, 2, 30],   nome: 'Início do nível' },
-    '6': { pos: [15, 10, -10],  alvo: [0, 5, -8],   nome: 'Vista do loop' },
-    '7': { pos: [20, 6, -28],   alvo: [0, 2, -30],  nome: 'Final do nível' },
-    '8': { pos: [0, 5, 45],     alvo: [0, 3, 0],    nome: 'Frente (side-scroll)' }
-};
+// --- Estado da câmara ---
+var vistaAtual = 'Vista geral (3/4)';
 
 var labelVista = document.createElement('div');
 labelVista.style.cssText = 'position:fixed;top:10px;left:10px;background:rgba(0,0,0,0.7);color:#fff;padding:8px 16px;font-family:monospace;font-size:14px;border-radius:6px;z-index:100;pointer-events:none;';
-labelVista.textContent = 'Vista: Vista geral (3/4) — Teclas 1-8 para mudar, O/0 para alternar câmara';
+labelVista.textContent = 'Vista: Vista geral — O/0: side-scroll | C: Follow Sonic | F: câmara livre';
 document.body.appendChild(labelVista);
 
 function inicializarCameraOrtografica() {
@@ -90,23 +88,46 @@ function inicializarCameraOrtografica() {
     camaraOrtografica.updateProjectionMatrix();
 }
 
-function aplicarPresetCamara(tecla) {
-    var preset = presetsCamara[tecla];
-    if (!preset) return;
-    // Sem. 4: desativar follow ao usar preset manual
+function atualizarLabelVista() {
+    if (modoCamaraLivre) {
+        labelVista.textContent = 'Vista: Câmara livre — WASD mover | Roda do rato sobe/desce | ESC: sair';
+    } else if (modoCamara === 'ortografica') {
+        labelVista.textContent = 'Vista: Side-scroll ortográfica — O/0: alternar | C: Follow Sonic | F: câmara livre';
+    } else if (modoSeguirSonic) {
+        labelVista.textContent = 'Vista: Follow Sonic — O/0: alternar | C: sair follow | F: câmara livre';
+    } else {
+        labelVista.textContent = 'Vista: ' + vistaAtual + ' — O/0: side-scroll | C: Follow Sonic | F: câmara livre';
+    }
+}
+
+function ativarCamaraLivre() {
+    modoCamaraLivre = true;
+    var dir = new THREE.Vector3();
+    camaraPerspetiva.getWorldDirection(dir);
+    camLivreYaw = Math.atan2(-dir.x, -dir.z);
+    camLivrePitch = Math.asin(Math.max(-1, Math.min(1, dir.y)));
+    if (modoCamara === 'ortografica') {
+        modoCamara = 'perspetiva';
+        cameraAtiva = camaraPerspetiva;
+    }
     modoSeguirSonic = false;
-    camaraPerspetiva.position.set(preset.pos[0], preset.pos[1], preset.pos[2]);
-    camaraPerspetiva.lookAt(preset.alvo[0], preset.alvo[1], preset.alvo[2]);
-    vistaAtual = preset.nome;
+    vistaAtual = 'Câmara livre';
+    renderer.domElement.requestPointerLock();
     atualizarLabelVista();
 }
 
-function atualizarLabelVista() {
-    if (modoCamara === 'ortografica') {
-        labelVista.textContent = 'Vista: Side-scroll ortográfica — Teclas O/0 para alternar câmara';
-    } else {
-        labelVista.textContent = 'Vista: ' + vistaAtual + ' — Teclas 1-8 para mudar, O/0 para alternar câmara';
+function desativarCamaraLivre() {
+    modoCamaraLivre = false;
+    if (document.pointerLockElement === renderer.domElement) {
+        document.exitPointerLock();
     }
+    renderer.domElement.style.cursor = 'default';
+    atualizarLabelVista();
+}
+
+function alternarCamaraLivre() {
+    if (modoCamaraLivre) desativarCamaraLivre();
+    else ativarCamaraLivre();
 }
 
 function alternarModoCamara() {
@@ -117,9 +138,18 @@ function alternarModoCamara() {
         modoCamara = 'perspetiva';
         cameraAtiva = camaraPerspetiva;
     }
-    // Sol e nuvens rodam 90° em Y para ficarem virados para a câmara lateral
-    var rotY = (modoCamara === 'ortografica') ? -Math.PI / 2 : 0;
-    if (sol) sol.rotation.y = rotY;
+    // Sol e nuvens rodam +90° em Y para virarem a sua face (normal +Z) para o eixo +X
+    // onde se encontra a câmara ortográfica
+    var rotY = (modoCamara === 'ortografica') ? Math.PI / 2 : 0;
+    if (sol) {
+        sol.rotation.y = rotY;
+        // Reposicionar para ficar dentro do frustum em ambos os modos
+        if (modoCamara === 'ortografica') {
+            sol.position.set(-12, 30, 22);
+        } else {
+            sol.position.set(0, 18, -50);
+        }
+    }
     for (var i = 0; i < nuvens.length; i++) {
         nuvens[i].rotation.y = rotY;
     }
@@ -128,22 +158,29 @@ function alternarModoCamara() {
 
 document.addEventListener('keydown', function(evento) {
     var tecla = evento.key;
-    if (presetsCamara[tecla]) {
-        aplicarPresetCamara(tecla);
-    } else if (tecla === 'o' || tecla === 'O' || tecla === '0') {
+    var teclaLower = tecla.toLowerCase();
+    if (tecla === 'o' || tecla === 'O' || tecla === '0') {
+        if (modoCamaraLivre) desativarCamaraLivre();
         alternarModoCamara();
     }
-    // Sem. 4: ativar câmara follow
-    if (tecla.toLowerCase() === 'c') {
-        modoSeguirSonic = true;
-        vistaAtual = 'Follow Sonic';
-        labelVista.textContent = 'Vista: Follow Sonic — WASD para mover | 1-8 para presets';
+    if (teclaLower === 'c') {
+        if (modoCamaraLivre) desativarCamaraLivre();
+        modoSeguirSonic = !modoSeguirSonic;
+        if (modoSeguirSonic) vistaAtual = 'Follow Sonic';
+        else vistaAtual = 'Vista geral';
+        atualizarLabelVista();
     }
-    // Sem. 4: registar teclas WASD premidas
-    var teclaLower = tecla.toLowerCase();
+    if (teclaLower === 'f') {
+        alternarCamaraLivre();
+    }
+    // ESC sai da câmara livre
+    if (evento.code === 'Escape' && modoCamaraLivre) {
+        desativarCamaraLivre();
+    }
+    // WASD
     if (teclasPremidas.hasOwnProperty(teclaLower)) teclasPremidas[teclaLower] = true;
-    // Sem. 4: alternar modo bola (Espaço)
-    if (evento.code === 'Space' && sonicPlaceholder && sonicBola) {
+    // Sem. 4: alternar modo bola (Espaço) — ignorado em câmara livre
+    if (evento.code === 'Space' && !modoCamaraLivre && sonicPlaceholder && sonicBola) {
         modoBola = !modoBola;
         sonicPlaceholder.visible = !modoBola;
         sonicBola.visible = modoBola;
@@ -155,6 +192,38 @@ document.addEventListener('keyup', function(evento) {
     var tecla = evento.key.toLowerCase();
     if (teclasPremidas.hasOwnProperty(tecla)) teclasPremidas[tecla] = false;
 });
+
+// --- Sem. 5: FPS mouse-look com Pointer Lock ---
+document.addEventListener('pointerlockchange', function() {
+    if (document.pointerLockElement !== renderer.domElement && modoCamaraLivre) {
+        desativarCamaraLivre();
+    }
+});
+
+renderer.domElement.addEventListener('click', function(e) {
+    if (modoCamaraLivre) return;
+    // Clicar na canvas ativa pointer lock se não estivermos noutro modo
+});
+
+document.addEventListener('mousemove', function(e) {
+    if (!modoCamaraLivre) return;
+    if (document.pointerLockElement === renderer.domElement) {
+        var sensibilidade = 0.002;
+        camLivreYaw   -= e.movementX * sensibilidade;
+        camLivrePitch -= e.movementY * sensibilidade;
+        var lim = Math.PI / 2 - 0.05;
+        if (camLivrePitch >  lim) camLivrePitch =  lim;
+        if (camLivrePitch < -lim) camLivrePitch = -lim;
+    }
+});
+
+renderer.domElement.addEventListener('wheel', function(e) {
+    if (!modoCamaraLivre) return;
+    e.preventDefault();
+    var velY = 4;
+    if (e.deltaY < 0) camaraPerspetiva.position.y += velY;
+    else camaraPerspetiva.position.y -= velY;
+}, { passive: false });
 
 // --- Sem. 0/1: Textura xadrez (Canvas 2D, RepeatWrapping 8x8) ---
 function criarTexturaXadrez() {
@@ -338,7 +407,8 @@ function criarTerreno() {
 
     // === MAR: Oceano com ondas ===
     var materialOceano = new THREE.MeshPhysicalMaterial({ color: 0x0e5e8c, roughness: 0.12, metalness: 0.15, transparent: true, opacity: 0.88, side: THREE.DoubleSide });
-    oceano = new THREE.Mesh(new THREE.PlaneGeometry(300, 300, 120, 120), materialOceano);
+    // Passo 1: segmentos reduzidos de 120×120 para 60×60 (4× menos vértices)
+    oceano = new THREE.Mesh(new THREE.PlaneGeometry(300, 300, 60, 60), materialOceano);
     oceano.rotation.x = -Math.PI / 2;
     oceano.position.set(0, -3.2, 0);
     oceano.receiveShadow = true;
@@ -444,11 +514,12 @@ function criarSkyboxRetro() {
 
     var materialNuvem = new THREE.MeshBasicMaterial({ color: 0xffffff });
 
-    for (var n = 0; n < 7; n++) {
+    for (var n = 0; n < 14; n++) {
         var grupoNuvem = new THREE.Group();
-        var posX = -30 + n * 10;
-        var posY = 11 + (n % 3) * 2;
-        var posZ = -30 + (n % 2) * 5;
+        var posX = -40 + n * 7;
+        var posY = 20 + (n % 4) * 1.8;
+        // Espalhar nuvens em Z para serem visíveis na vista ortográfica lateral
+        var posZ = -35 + (n * 5) % 70;
 
         for (var parte = 0; parte < 3; parte++) {
             var geometriaNuvem = new THREE.SphereGeometry(1.2 + parte * 0.25, 16, 8);
@@ -470,8 +541,16 @@ function criarIlhasDistantes() {
     var matVerdeClaro = new THREE.MeshBasicMaterial({ color: 0x39b54a });
     var matVerdeEsc   = new THREE.MeshBasicMaterial({ color: 0x16853a });
     var matTronco     = new THREE.MeshBasicMaterial({ color: 0x6b4226 });
+    var matRocha      = new THREE.MeshBasicMaterial({ color: 0x7a7670 });
+    var matRochaEsc   = new THREE.MeshBasicMaterial({ color: 0x5a5650 });
+    var matArbusto    = new THREE.MeshBasicMaterial({ color: 0x2d8a3a });
+    var matsFlores    = [
+        new THREE.MeshBasicMaterial({ color: 0xff6b6b }),
+        new THREE.MeshBasicMaterial({ color: 0xffd93d }),
+        new THREE.MeshBasicMaterial({ color: 0xffffff })
+    ];
 
-    // [angulo (rad), distancia, raio, altura]
+    // [angulo (rad), distancia, raio, altura] — ilhas em volta da cena
     var defs = [
         [0.3,   95, 7, 1.2],
         [1.1,  100, 5, 0.9],
@@ -482,12 +561,33 @@ function criarIlhasDistantes() {
         [5.4,   95, 6, 1.1]
     ];
 
-    for (var i = 0; i < defs.length; i++) {
-        var d = defs[i];
-        var x = Math.cos(d[0]) * d[1];
-        var z = Math.sin(d[0]) * d[1];
+    // Ilhas extra posicionadas para serem visíveis na vista ortográfica (x<0, |z|<28)
+    // formato: [x, z, raio, altura] (override)
+    var extras = [
+        [-65,  -18, 7, 1.3],
+        [-70,    0, 6, 1.2],
+        [-75,   18, 6, 1.1],
+        // Ilhas à direita do cenário (X positivo)
+        [ 55,  -15, 7, 1.4],
+        [ 60,   12, 6, 1.2],
+        [ 50,    0, 5, 1.0]
+    ];
+
+    for (var i = 0; i < defs.length + extras.length; i++) {
+        var d, x, z;
+        if (i < defs.length) {
+            d = defs[i];
+            x = Math.cos(d[0]) * d[1];
+            z = Math.sin(d[0]) * d[1];
+        } else {
+            var e = extras[i - defs.length];
+            x = e[0]; z = e[1];
+            d = [0, 0, e[2], e[3]];
+        }
 
         var grupo = new THREE.Group();
+        // RNG determinístico por ilha (posição como seed) — distribuições reproduzíveis
+        var rngIlha = criarRNG(Math.floor(x * 13 + z * 31 + 1000));
 
         // Base de areia (cilindro achatado)
         var base = new THREE.Mesh(
@@ -497,34 +597,100 @@ function criarIlhasDistantes() {
         base.position.y = d[3] / 2 - 1.5;
         grupo.add(base);
 
-        // Massa de árvores (2-3 cones por ilha)
-        var numArvores = 2 + (i % 2);
-        for (var a = 0; a < numArvores; a++) {
-            var ang = (a / numArvores) * Math.PI * 2;
-            var dx = Math.cos(ang) * d[2] * 0.4;
-            var dz = Math.sin(ang) * d[2] * 0.4;
-            var alturaArv = 3 + Math.random() * 2;
-            var cone = new THREE.Mesh(
-                new THREE.ConeGeometry(d[2] * 0.45, alturaArv, 6),
-                a % 2 === 0 ? matVerdeClaro : matVerdeEsc
-            );
-            cone.position.set(dx, d[3] + alturaArv / 2 - 1.5, dz);
-            grupo.add(cone);
-        }
-
-        // Pequena palmeira central (tronco + topo)
-        var tronco = new THREE.Mesh(
-            new THREE.CylinderGeometry(0.15, 0.2, 2.0, 6),
-            matTronco
-        );
-        tronco.position.y = d[3] + 1.0 - 1.5;
-        grupo.add(tronco);
-        var topo = new THREE.Mesh(
-            new THREE.ConeGeometry(1.0, 1.5, 6),
+        // Camada de relva por cima da areia (disco verde mais pequeno que a base)
+        var raioRelva = d[2] * 0.78;
+        var relva = new THREE.Mesh(
+            new THREE.CylinderGeometry(raioRelva * 0.95, raioRelva, 0.25, 14),
             matVerdeClaro
         );
-        topo.position.y = d[3] + 2.5 - 1.5;
-        grupo.add(topo);
+        relva.position.y = d[3] - 1.5 + 0.125;
+        grupo.add(relva);
+
+        // Bordo escuro da relva (pequena moldura)
+        var bordo = new THREE.Mesh(
+            new THREE.CylinderGeometry(raioRelva * 1.02, raioRelva * 1.02, 0.08, 14),
+            matVerdeEsc
+        );
+        bordo.position.y = d[3] - 1.5 + 0.04;
+        grupo.add(bordo);
+
+        // Palmeiras — escala aumentada para serem visíveis à distância
+        var escalaBase = d[2] * 0.30;
+        // Densidade aumentada
+        var numPalm = Math.max(10, Math.floor(d[2] * 2.5 + rngIlha.range(0, 4)));
+
+        for (var p = 0; p < numPalm; p++) {
+            // Distribuição em "anéis" para preencher sem todas no centro
+            var angP = rngIlha.next() * Math.PI * 2;
+            var distP = Math.sqrt(rngIlha.next()) * raioRelva * 0.85;
+            var dx = Math.cos(angP) * distP;
+            var dz = Math.sin(angP) * distP;
+            // Variação aleatória de escala (±20%)
+            var escalaP = escalaBase * rngIlha.range(0.80, 1.20);
+
+            var palm = criarPalmeira(x + dx, z + dz, escalaP);
+            // Reparentar para a ilha (em coords locais, em cima da relva)
+            cena.remove(palm);
+            palm.position.set(dx, d[3] - 1.5 + 0.25, dz);
+            grupo.add(palm);
+        }
+
+        // Arbustos (esferas verdes achatadas) — 5-10 por ilha, maiores
+        var numArbustos = 5 + Math.floor(rngIlha.next() * 6);
+        for (var a = 0; a < numArbustos; a++) {
+            var angA = rngIlha.next() * Math.PI * 2;
+            var distA = Math.sqrt(rngIlha.next()) * raioRelva * 0.85;
+            var tamA = rngIlha.range(0.35, 0.70) * d[2] * 0.35;
+            var arbusto = new THREE.Mesh(
+                new THREE.SphereGeometry(tamA, 8, 6),
+                rngIlha.next() > 0.5 ? matArbusto : matVerdeEsc
+            );
+            arbusto.position.set(
+                Math.cos(angA) * distA,
+                d[3] - 1.5 + 0.25 + tamA * 0.7,
+                Math.sin(angA) * distA
+            );
+            arbusto.scale.y = 0.7;
+            grupo.add(arbusto);
+        }
+
+        // Rochas (esferas cinzentas achatadas) — 3-6 por ilha, junto à areia, maiores
+        var numRochas = 3 + Math.floor(rngIlha.next() * 4);
+        for (var r = 0; r < numRochas; r++) {
+            var angR = rngIlha.next() * Math.PI * 2;
+            var distR = rngIlha.range(0.7, 0.98) * d[2];
+            var tamR = rngIlha.range(0.30, 0.60) * d[2] * 0.30;
+            var rocha = new THREE.Mesh(
+                new THREE.SphereGeometry(tamR, 6, 5),
+                rngIlha.next() > 0.5 ? matRocha : matRochaEsc
+            );
+            rocha.position.set(
+                Math.cos(angR) * distR,
+                d[3] - 1.5 + tamR * 0.5,
+                Math.sin(angR) * distR
+            );
+            rocha.scale.set(1.2, 0.55, 1.0);
+            rocha.rotation.y = rngIlha.next() * Math.PI;
+            grupo.add(rocha);
+        }
+
+        // Aglomerados de flores (pontos coloridos) — 6-12 por ilha, maiores
+        var numFlores = 6 + Math.floor(rngIlha.next() * 7);
+        for (var f = 0; f < numFlores; f++) {
+            var angF = rngIlha.next() * Math.PI * 2;
+            var distF = Math.sqrt(rngIlha.next()) * raioRelva * 0.80;
+            var tamF = rngIlha.range(0.15, 0.30) * (d[2] / 5);
+            var flor = new THREE.Mesh(
+                new THREE.SphereGeometry(tamF, 6, 4),
+                matsFlores[Math.floor(rngIlha.next() * matsFlores.length)]
+            );
+            flor.position.set(
+                Math.cos(angF) * distF,
+                d[3] - 1.5 + 0.30 + tamF,
+                Math.sin(angF) * distF
+            );
+            grupo.add(flor);
+        }
 
         grupo.position.set(x, -1.5, z);
         ilhasDistantes.push(grupo);
@@ -532,48 +698,70 @@ function criarIlhasDistantes() {
     }
 }
 
-// --- Sem. 5: Barco/veleiro a navegar no mar ---
+// --- Sem. 5: Barcos a navegar em loop circular à volta das ilhas ---
 function criarBarco() {
-    barco = new THREE.Group();
+    // Configuração de cada barco: centro X, centro Z, raio, vel angular, fase, cor da vela
+    // Órbitas em águas abertas entre o nível e as ilhas distantes (sem colisões)
+    var configs = [
+        { cx: -38, cz: -22, raio: 9, vel: 0.18, fase: 0,        corVela: 0xfafafa },
+        { cx: -42, cz:  20, raio: 9, vel: 0.13, fase: Math.PI,  corVela: 0xffe28a }
+    ];
 
-    // Casco (caixa alongada inclinada nas pontas via escala)
-    var matCasco = new THREE.MeshBasicMaterial({ color: 0x8b4a2b });
-    var casco = new THREE.Mesh(new THREE.BoxGeometry(4, 1.2, 1.6), matCasco);
-    barco.add(casco);
+    for (var b = 0; b < configs.length; b++) {
+        var cfg = configs[b];
+        var barco = new THREE.Group();
 
-    // Convés
-    var matConves = new THREE.MeshBasicMaterial({ color: 0xd4a574 });
-    var conves = new THREE.Mesh(new THREE.BoxGeometry(3.5, 0.2, 1.4), matConves);
-    conves.position.y = 0.7;
-    barco.add(conves);
+        // Casco
+        var casco = new THREE.Mesh(
+            new THREE.BoxGeometry(4, 1.2, 1.6),
+            new THREE.MeshBasicMaterial({ color: 0x8b4a2b })
+        );
+        barco.add(casco);
 
-    // Mastro
-    var mastro = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.08, 0.08, 4, 6),
-        new THREE.MeshBasicMaterial({ color: 0x4a2a14 })
-    );
-    mastro.position.set(0, 2.7, 0);
-    barco.add(mastro);
+        // Convés
+        var conves = new THREE.Mesh(
+            new THREE.BoxGeometry(3.5, 0.2, 1.4),
+            new THREE.MeshBasicMaterial({ color: 0xd4a574 })
+        );
+        conves.position.y = 0.7;
+        barco.add(conves);
 
-    // Vela (plano branco)
-    var matVela = new THREE.MeshBasicMaterial({ color: 0xfafafa, side: THREE.DoubleSide });
-    var vela = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 3.0), matVela);
-    vela.position.set(0.05, 3.0, 0);
-    vela.rotation.y = Math.PI / 2;
-    barco.add(vela);
+        // Mastro
+        var mastro = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.08, 0.08, 4, 6),
+            new THREE.MeshBasicMaterial({ color: 0x4a2a14 })
+        );
+        mastro.position.set(0, 2.7, 0);
+        barco.add(mastro);
 
-    // Bandeira no topo
-    var bandeira = new THREE.Mesh(
-        new THREE.PlaneGeometry(0.6, 0.35),
-        new THREE.MeshBasicMaterial({ color: 0xcc1111, side: THREE.DoubleSide })
-    );
-    bandeira.position.set(0.35, 4.7, 0);
-    bandeira.rotation.y = Math.PI / 2;
-    barco.add(bandeira);
+        // Vela (plano com side DoubleSide)
+        var vela = new THREE.Mesh(
+            new THREE.PlaneGeometry(2.2, 3.0),
+            new THREE.MeshBasicMaterial({ color: cfg.corVela, side: THREE.DoubleSide })
+        );
+        vela.position.set(0.05, 3.0, 0);
+        vela.rotation.y = Math.PI / 2;
+        barco.add(vela);
 
-    barco.position.set(60, -0.5, -25);
-    barco.userData.velX = 1.2;
-    cena.add(barco);
+        // Bandeira no topo do mastro
+        var bandeira = new THREE.Mesh(
+            new THREE.PlaneGeometry(0.6, 0.35),
+            new THREE.MeshBasicMaterial({ color: 0xcc1111, side: THREE.DoubleSide })
+        );
+        bandeira.position.set(0.35, 4.7, 0);
+        bandeira.rotation.y = Math.PI / 2;
+        barco.add(bandeira);
+
+        barco.userData = {
+            cx: cfg.cx,
+            cz: cfg.cz,
+            raio: cfg.raio,
+            vel: cfg.vel,
+            fase: cfg.fase
+        };
+        barcos.push(barco);
+        cena.add(barco);
+    }
 }
 
 // --- Sem. 5: Gaivotas animadas no céu ---
@@ -673,7 +861,7 @@ function criarLooping() {
         var quaternion = new THREE.Quaternion();
         quaternion.setFromUnitVectors(eixo, tangente.normalize());
         suporte.quaternion.copy(quaternion);
-        suporte.castShadow = true;
+        // Passo 2: castShadow removido — suportes finos, sombra = ponto impercetível
         grupoLooping.add(suporte);
     }
 
@@ -812,7 +1000,8 @@ function gerarFolhas(grupo, pontosRamo, params, rng) {
         posicao.z += rng.range(-0.5, 0.5);
 
         var cor = coresFolha[Math.floor(rng.next() * coresFolha.length)];
-        var materialFolha = new THREE.MeshStandardMaterial({ color: cor, roughness: 0.6, side: THREE.DoubleSide });
+        // Passo 3: material partilhado por cor em vez de criar um novo por folha
+        var materialFolha = materiaisFolhas[cor] || (materiaisFolhas[cor] = new THREE.MeshStandardMaterial({ color: cor, roughness: 0.6, side: THREE.DoubleSide }));
         var tamanho = tamanhoFolha * rng.range(0.7, 1.3);
         var baseRotY = rng.range(0, Math.PI * 2);
 
@@ -821,7 +1010,7 @@ function gerarFolhas(grupo, pontosRamo, params, rng) {
             deformarFolha(plano, rng);
             plano.position.copy(posicao);
             plano.rotation.set(rng.range(-0.3, 0.3), baseRotY + cp * Math.PI / 2, 0);
-            plano.castShadow = true;
+            // Passo 2: castShadow removido — folhas cross-plane são planos finos
             plano.userData.eFolha = true;
             plano.userData.fase = rng.range(0, Math.PI * 2);
             grupo.add(plano);
@@ -943,7 +1132,7 @@ function criarPalmeira(posX, posZ, escala) {
             folha.geometry.computeVertexNormals();
 
             folha.rotation.y = p * Math.PI / 3;
-            folha.castShadow = true;
+            // castShadow removido — folhas cross-plane são planos finos
             grupoFolha.add(folha);
         }
 
@@ -965,7 +1154,7 @@ function criarPalmeira(posX, posZ, escala) {
             topoTronco.y - 0.3,
             topoTronco.z + Math.sin(anguloCoco) * 0.3
         );
-        coco.castShadow = true;
+        // castShadow removido — cocos pequenos, sombra impercetível
         grupo.add(coco);
     }
 
@@ -1114,7 +1303,7 @@ function criarAneis() {
     for (var i = 0; i < pos.length; i++) {
         var grupoAnel = new THREE.Group();
         var anel = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.13, 16, 48), materialDourado);
-        anel.castShadow = true;
+        // Passo 2: castShadow removido — anéis pequenos, sombra impercetível
         grupoAnel.add(anel);
         grupoAnel.add(new THREE.Mesh(new THREE.TorusGeometry(0.35, 0.04, 8, 32), materialBrilho));
         grupoAnel.position.set(pos[i][0], pos[i][1], pos[i][2]);
@@ -1249,7 +1438,7 @@ function criarMola(x, y, z) {
 
     var base = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.55, 0.3, 12), materialBase);
     base.position.y = 0.15;
-    base.castShadow = true;
+    // castShadow removido — base pequena da mola
     grupo.add(base);
 
     for (var i = 0; i < 4; i++) {
@@ -1264,7 +1453,7 @@ function criarMola(x, y, z) {
 
     var topo = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 0.15, 12), materialTopo);
     topo.position.y = 0.9;
-    topo.castShadow = true;
+    // castShadow removido — topo pequeno da mola
     grupo.add(topo);
 
     grupo.position.set(x, y, z);
@@ -1282,12 +1471,12 @@ function criarCheckpoint(x, y, z) {
 
     var poste = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.12, 3, 8), materialPoste);
     poste.position.y = 1.5;
-    poste.castShadow = true;
+    // castShadow removido — poste fino do checkpoint
     grupo.add(poste);
 
     var esfera = new THREE.Mesh(new THREE.SphereGeometry(0.3, 16, 12), materialTopo);
     esfera.position.y = 3.2;
-    esfera.castShadow = true;
+    // castShadow removido — esfera pequena do checkpoint
     grupo.add(esfera);
 
     var basePoste = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.3, 0.2, 8), materialPoste);
@@ -1399,12 +1588,12 @@ function criarPlacaFinal(x, y, z) {
 
     var poste = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 3.5, 8), materialPoste);
     poste.position.y = 1.75;
-    poste.castShadow = true;
+    // castShadow removido — poste fino da placa final
     grupo.add(poste);
 
     var placa = new THREE.Mesh(new THREE.BoxGeometry(1.5, 1.0, 0.1), materialPlaca);
     placa.position.y = 3.2;
-    placa.castShadow = true;
+    // castShadow removido — placa pequena
     grupo.add(placa);
 
     var estrela = new THREE.Mesh(new THREE.SphereGeometry(0.2, 8, 6), materialEstrela);
@@ -1539,12 +1728,38 @@ function loop() {
 
     atualizarDimensoes();
 
-    // --- Sem. 4: Movimento do Sonic com WASD (ambos os modos) ---
-    if (sonicPlaceholder) {
+    // --- Sem. 5: Atualizar câmara livre (WASD + Shift/Ctrl + arrastar rato) ---
+    if (modoCamaraLivre) {
+        var velCam = (teclasPremidas.shift && teclasPremidas.control ? 40 : 20) * delta;
+        var cosP = Math.cos(camLivrePitch);
+        var forward = new THREE.Vector3(
+            -Math.sin(camLivreYaw) * cosP,
+             Math.sin(camLivrePitch),
+            -Math.cos(camLivreYaw) * cosP
+        );
+        var right = new THREE.Vector3(Math.cos(camLivreYaw), 0, -Math.sin(camLivreYaw));
+
+        var deslocamento = new THREE.Vector3();
+        if (teclasPremidas.w) deslocamento.addScaledVector(forward,  velCam);
+        if (teclasPremidas.s) deslocamento.addScaledVector(forward, -velCam);
+        if (teclasPremidas.a) deslocamento.addScaledVector(right,   -velCam);
+        if (teclasPremidas.d) deslocamento.addScaledVector(right,    velCam);
+        camaraPerspetiva.position.add(deslocamento);
+        camaraPerspetiva.lookAt(camaraPerspetiva.position.clone().add(forward));
+    }
+
+    // --- Sem. 4: Movimento do Sonic com WASD (bloqueado em câmara livre) ---
+    if (sonicPlaceholder && !modoCamaraLivre) {
         var vel = 8 * delta;
         var movX = 0, movZ = 0;
-        if (teclasPremidas.w) movZ -= vel;
-        if (teclasPremidas.s) movZ += vel;
+        // Ajuste side-scroll: inverter W/S no modo ortográfico
+        if (modoCamara === 'ortografica') {
+            if (teclasPremidas.w) movZ += vel;  // esquerda no ecrã
+            if (teclasPremidas.s) movZ -= vel;  // direita no ecrã
+        } else {
+            if (teclasPremidas.w) movZ -= vel;
+            if (teclasPremidas.s) movZ += vel;
+        }
         if (teclasPremidas.a) movX -= vel;
         if (teclasPremidas.d) movX += vel;
         if (movX !== 0 || movZ !== 0) {
@@ -1579,10 +1794,10 @@ function loop() {
 
     for (var n = 0; n < nuvens.length; n++) {
         if (modoCamara === 'ortografica') {
-            // No modo 2D, nuvens se movem para o lado contrário (esquerda)
-            nuvens[n].position.x -= delta * (0.4 + n * 0.08);
-            if (nuvens[n].position.x < -40) {
-                nuvens[n].position.x = 40;
+            // Side-scroll: nuvens movem-se em Z (horizontal no ecrã), da direita para a esquerda
+            nuvens[n].position.z += delta * (0.4 + n * 0.08);
+            if (nuvens[n].position.z > 50) {
+                nuvens[n].position.z = -50;
             }
         } else {
             // Modo 3D normal
@@ -1605,12 +1820,17 @@ function loop() {
         }
     }
 
-    // --- Sem. 5: Animação do barco (anda em X e oscila em Y) ---
-    if (barco) {
-        barco.position.x -= delta * barco.userData.velX;
-        if (barco.position.x < -90) barco.position.x = 90;
-        barco.position.y = -0.5 + Math.sin(tempo * 0.8) * 0.15;
-        barco.rotation.z = Math.sin(tempo * 0.8) * 0.04;
+    // --- Sem. 5: Animação dos barcos (órbita circular à volta das ilhas) ---
+    for (var bi = 0; bi < barcos.length; bi++) {
+        var b = barcos[bi];
+        var ud = b.userData;
+        var ang = tempo * ud.vel + ud.fase;
+        b.position.x = ud.cx + Math.cos(ang) * ud.raio;
+        b.position.z = ud.cz + Math.sin(ang) * ud.raio;
+        b.position.y = -0.5 + Math.sin(tempo * 0.8 + ud.fase) * 0.15;
+        // Proa apontada na direção tangente do movimento
+        b.rotation.y = -ang;
+        b.rotation.z = Math.sin(tempo * 0.8 + ud.fase) * 0.04;
     }
 
     // --- Sem. 5: Animação das gaivotas (trajetória circular + asas a bater) ---
@@ -1657,7 +1877,7 @@ function loop() {
             posOceano.setZ(wo, (ondaRadial + ondaDirecional + ondaDetalhe) * (0.3 + fatorDist * 0.7));
         }
         posOceano.needsUpdate = true;
-        oceano.geometry.computeVertexNormals();
+        // Passo 1: computeVertexNormals() removido — era o maior bottleneck CPU (14.641 vértices/frame)
     }
 
     // Animação das ondas de praia (avanço/recuo cíclico)
@@ -1687,11 +1907,6 @@ function loop() {
             var alvoPos = new THREE.Vector3(sp.x, sp.y + 6, sp.z + 14);
             camaraPerspetiva.position.lerp(alvoPos, 0.08);
             camaraPerspetiva.lookAt(sp.x, sp.y + 1, sp.z);
-        } else {
-            var preset = presetsCamara[Object.keys(presetsCamara).find(function(k) {
-                return presetsCamara[k].nome === vistaAtual;
-            })] || presetsCamara['1'];
-            camaraPerspetiva.lookAt(preset.alvo[0], preset.alvo[1], preset.alvo[2]);
         }
     }
 
