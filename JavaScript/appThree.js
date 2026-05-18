@@ -22,6 +22,7 @@ var relogio = new THREE.Clock();
 var chao, sol, nuvens = [];
 var aneisDecorativos = [], grupoLooping, vegetacao = [], palmeiras = [];
 var sonicPlaceholder, sonicBola, modoBola = false, oceano, espumaOndas = [];
+var ceu, ilhasDistantes = [], barco, gaivotas = [];
 
 // Sem. 3: TextureLoader para carregar texturas externas
 var carregadorTexturas = new THREE.TextureLoader();
@@ -115,6 +116,12 @@ function alternarModoCamara() {
     } else {
         modoCamara = 'perspetiva';
         cameraAtiva = camaraPerspetiva;
+    }
+    // Sol e nuvens rodam 90° em Y para ficarem virados para a câmara lateral
+    var rotY = (modoCamara === 'ortografica') ? -Math.PI / 2 : 0;
+    if (sol) sol.rotation.y = rotY;
+    for (var i = 0; i < nuvens.length; i++) {
+        nuvens[i].rotation.y = rotY;
     }
     atualizarLabelVista();
 }
@@ -386,29 +393,54 @@ function criarTerreno() {
     }
 }
 
-// --- Sem. 0/1: Skybox retro (sol, montanhas, nuvens animadas) ---
+// --- Sem. 0/1: Skybox retro (céu gradiente, sol, nuvens animadas) ---
 function criarSkyboxRetro() {
-    cena.background = new THREE.Color(0x6ec6ff);
-    cena.fog = new THREE.Fog(0x6ec6ff, 80, 160);
+    cena.fog = new THREE.Fog(0x6ec6ff, 80, 200);
 
+    // Céu em gradiente (esfera invertida com ShaderMaterial)
+    var shaderCeu = {
+        uniforms: {
+            corTopo:  { value: new THREE.Color(0x1e5fa8) },
+            corBase:  { value: new THREE.Color(0x9ed8ff) },
+            offset:   { value: 33 },
+            exponent: { value: 0.6 }
+        },
+        vertexShader: [
+            'varying vec3 vWorldPosition;',
+            'void main() {',
+            '  vec4 worldPosition = modelMatrix * vec4(position, 1.0);',
+            '  vWorldPosition = worldPosition.xyz;',
+            '  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);',
+            '}'
+        ].join('\n'),
+        fragmentShader: [
+            'uniform vec3 corTopo;',
+            'uniform vec3 corBase;',
+            'uniform float offset;',
+            'uniform float exponent;',
+            'varying vec3 vWorldPosition;',
+            'void main() {',
+            '  float h = normalize(vWorldPosition + vec3(0.0, offset, 0.0)).y;',
+            '  gl_FragColor = vec4(mix(corBase, corTopo, max(pow(max(h, 0.0), exponent), 0.0)), 1.0);',
+            '}'
+        ].join('\n')
+    };
+    var matCeu = new THREE.ShaderMaterial({
+        uniforms: shaderCeu.uniforms,
+        vertexShader: shaderCeu.vertexShader,
+        fragmentShader: shaderCeu.fragmentShader,
+        side: THREE.BackSide,
+        depthWrite: false
+    });
+    ceu = new THREE.Mesh(new THREE.SphereGeometry(400, 32, 16), matCeu);
+    cena.add(ceu);
+
+    // Sol — recentrado para ser visível em ambos os modos de câmara
     var geometriaSol = new THREE.CircleGeometry(3, 48);
     var materialSol = new THREE.MeshBasicMaterial({ color: 0xffdc4a });
     sol = new THREE.Mesh(geometriaSol, materialSol);
-    sol.position.set(-20, 16, -40);
+    sol.position.set(0, 18, -50);
     cena.add(sol);
-
-    var materialMontanhaVerde = new THREE.MeshBasicMaterial({ color: 0x39b54a });
-    var materialMontanhaEscura = new THREE.MeshBasicMaterial({ color: 0x16853a });
-
-    for (var i = 0; i < 12; i++) {
-        var geometriaMontanha = new THREE.ConeGeometry(6, 10 + (i % 3) * 2, 3);
-        var materialMontanha = i % 2 === 0 ? materialMontanhaVerde : materialMontanhaEscura;
-        var montanha = new THREE.Mesh(geometriaMontanha, materialMontanha);
-
-        montanha.position.set(-35 + i * 7, 3, -42);
-        montanha.rotation.y = Math.PI / 4;
-        cena.add(montanha);
-    }
 
     var materialNuvem = new THREE.MeshBasicMaterial({ color: 0xffffff });
 
@@ -429,6 +461,147 @@ function criarSkyboxRetro() {
         grupoNuvem.scale.set(1.4, 0.55, 0.35);
         nuvens.push(grupoNuvem);
         cena.add(grupoNuvem);
+    }
+}
+
+// --- Sem. 5: Ilhas distantes no horizonte (low-poly, decorativas) ---
+function criarIlhasDistantes() {
+    var matAreiaIlha = new THREE.MeshBasicMaterial({ color: 0xe8c876 });
+    var matVerdeClaro = new THREE.MeshBasicMaterial({ color: 0x39b54a });
+    var matVerdeEsc   = new THREE.MeshBasicMaterial({ color: 0x16853a });
+    var matTronco     = new THREE.MeshBasicMaterial({ color: 0x6b4226 });
+
+    // [angulo (rad), distancia, raio, altura]
+    var defs = [
+        [0.3,   95, 7, 1.2],
+        [1.1,  100, 5, 0.9],
+        [1.9,   85, 8, 1.4],
+        [2.7,  105, 6, 1.0],
+        [3.6,   90, 5, 0.8],
+        [4.5,  100, 7, 1.3],
+        [5.4,   95, 6, 1.1]
+    ];
+
+    for (var i = 0; i < defs.length; i++) {
+        var d = defs[i];
+        var x = Math.cos(d[0]) * d[1];
+        var z = Math.sin(d[0]) * d[1];
+
+        var grupo = new THREE.Group();
+
+        // Base de areia (cilindro achatado)
+        var base = new THREE.Mesh(
+            new THREE.CylinderGeometry(d[2], d[2] * 1.15, d[3], 12),
+            matAreiaIlha
+        );
+        base.position.y = d[3] / 2 - 1.5;
+        grupo.add(base);
+
+        // Massa de árvores (2-3 cones por ilha)
+        var numArvores = 2 + (i % 2);
+        for (var a = 0; a < numArvores; a++) {
+            var ang = (a / numArvores) * Math.PI * 2;
+            var dx = Math.cos(ang) * d[2] * 0.4;
+            var dz = Math.sin(ang) * d[2] * 0.4;
+            var alturaArv = 3 + Math.random() * 2;
+            var cone = new THREE.Mesh(
+                new THREE.ConeGeometry(d[2] * 0.45, alturaArv, 6),
+                a % 2 === 0 ? matVerdeClaro : matVerdeEsc
+            );
+            cone.position.set(dx, d[3] + alturaArv / 2 - 1.5, dz);
+            grupo.add(cone);
+        }
+
+        // Pequena palmeira central (tronco + topo)
+        var tronco = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.15, 0.2, 2.0, 6),
+            matTronco
+        );
+        tronco.position.y = d[3] + 1.0 - 1.5;
+        grupo.add(tronco);
+        var topo = new THREE.Mesh(
+            new THREE.ConeGeometry(1.0, 1.5, 6),
+            matVerdeClaro
+        );
+        topo.position.y = d[3] + 2.5 - 1.5;
+        grupo.add(topo);
+
+        grupo.position.set(x, -1.5, z);
+        ilhasDistantes.push(grupo);
+        cena.add(grupo);
+    }
+}
+
+// --- Sem. 5: Barco/veleiro a navegar no mar ---
+function criarBarco() {
+    barco = new THREE.Group();
+
+    // Casco (caixa alongada inclinada nas pontas via escala)
+    var matCasco = new THREE.MeshBasicMaterial({ color: 0x8b4a2b });
+    var casco = new THREE.Mesh(new THREE.BoxGeometry(4, 1.2, 1.6), matCasco);
+    barco.add(casco);
+
+    // Convés
+    var matConves = new THREE.MeshBasicMaterial({ color: 0xd4a574 });
+    var conves = new THREE.Mesh(new THREE.BoxGeometry(3.5, 0.2, 1.4), matConves);
+    conves.position.y = 0.7;
+    barco.add(conves);
+
+    // Mastro
+    var mastro = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.08, 0.08, 4, 6),
+        new THREE.MeshBasicMaterial({ color: 0x4a2a14 })
+    );
+    mastro.position.set(0, 2.7, 0);
+    barco.add(mastro);
+
+    // Vela (plano branco)
+    var matVela = new THREE.MeshBasicMaterial({ color: 0xfafafa, side: THREE.DoubleSide });
+    var vela = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 3.0), matVela);
+    vela.position.set(0.05, 3.0, 0);
+    vela.rotation.y = Math.PI / 2;
+    barco.add(vela);
+
+    // Bandeira no topo
+    var bandeira = new THREE.Mesh(
+        new THREE.PlaneGeometry(0.6, 0.35),
+        new THREE.MeshBasicMaterial({ color: 0xcc1111, side: THREE.DoubleSide })
+    );
+    bandeira.position.set(0.35, 4.7, 0);
+    bandeira.rotation.y = Math.PI / 2;
+    barco.add(bandeira);
+
+    barco.position.set(60, -0.5, -25);
+    barco.userData.velX = 1.2;
+    cena.add(barco);
+}
+
+// --- Sem. 5: Gaivotas animadas no céu ---
+function criarGaivotas() {
+    var matAsa = new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+
+    for (var g = 0; g < 6; g++) {
+        var grupo = new THREE.Group();
+
+        // 2 planos finos formando "V" (asas)
+        var asaE = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 0.25), matAsa);
+        asaE.position.x = -0.55;
+        asaE.userData.lado = -1;
+        grupo.add(asaE);
+
+        var asaD = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 0.25), matAsa);
+        asaD.position.x = 0.55;
+        asaD.userData.lado = 1;
+        grupo.add(asaD);
+
+        // Trajetória circular ampla, cada gaivota com fase própria
+        grupo.userData.raio = 40 + g * 5;
+        grupo.userData.altura = 14 + (g % 3) * 2;
+        grupo.userData.fase = g * 1.05;
+        grupo.userData.vel = 0.15 + (g % 3) * 0.04;
+
+        cena.add(grupo);
+        gaivotas.push(grupo);
     }
 }
 
@@ -1432,6 +1605,32 @@ function loop() {
         }
     }
 
+    // --- Sem. 5: Animação do barco (anda em X e oscila em Y) ---
+    if (barco) {
+        barco.position.x -= delta * barco.userData.velX;
+        if (barco.position.x < -90) barco.position.x = 90;
+        barco.position.y = -0.5 + Math.sin(tempo * 0.8) * 0.15;
+        barco.rotation.z = Math.sin(tempo * 0.8) * 0.04;
+    }
+
+    // --- Sem. 5: Animação das gaivotas (trajetória circular + asas a bater) ---
+    for (var gv = 0; gv < gaivotas.length; gv++) {
+        var gaiv = gaivotas[gv];
+        var ud = gaiv.userData;
+        var ang = tempo * ud.vel + ud.fase;
+        gaiv.position.set(
+            Math.cos(ang) * ud.raio,
+            ud.altura + Math.sin(tempo * 0.6 + ud.fase) * 0.5,
+            Math.sin(ang) * ud.raio - 20
+        );
+        // Orientar gaivota na direção do movimento (tangente)
+        gaiv.rotation.y = -ang + Math.PI / 2;
+        // Bater asas
+        var batida = Math.sin(tempo * 6 + ud.fase) * 0.6;
+        gaiv.children[0].rotation.z =  batida;
+        gaiv.children[1].rotation.z = -batida;
+    }
+
     for (var vg = 0; vg < vegetacao.length; vg++) {
         var veg = vegetacao[vg];
         if (veg.tipo === 'ramificada' || veg.tipo === 'arbusto') {
@@ -1504,6 +1703,9 @@ function loop() {
 function Start() {
     criarTerreno();
     criarSkyboxRetro();
+    criarIlhasDistantes();
+    criarBarco();
+    criarGaivotas();
     criarLuzes();
     criarLooping();
     criarVegetacao();
