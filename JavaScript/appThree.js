@@ -612,7 +612,7 @@ function criarIlhasDistantes() {
         [1.1,  100, 5, 0.9],
         [1.9,   85, 8, 1.4],
         [2.7,  105, 6, 1.0],
-        [3.6,   90, 5, 0.8],
+        [3.6,  140, 5, 0.8],
         [4.5,  100, 7, 1.3],
         [5.4,   95, 6, 1.1]
     ];
@@ -620,13 +620,13 @@ function criarIlhasDistantes() {
     // Ilhas extra posicionadas para serem visíveis na vista ortográfica (x<0, |z|<28)
     // formato: [x, z, raio, altura] (override)
     var extras = [
-        [-65,  -18, 7, 1.3],
-        [-70,    0, 6, 1.2],
-        [-75,   18, 6, 1.1],
+        [-85,  -20, 7, 1.3],
+        [-90,    0, 6, 1.2],
+        [-95,   20, 6, 1.1],
         // Ilhas à direita do cenário (X positivo)
-        [ 55,  -15, 7, 1.4],
-        [ 60,   12, 6, 1.2],
-        [ 50,    0, 5, 1.0]
+        [ 75,  -18, 7, 1.4],
+        [ 80,   12, 6, 1.2],
+        [ 70,    0, 5, 1.0]
     ];
 
     for (var i = 0; i < defs.length + extras.length; i++) {
@@ -756,32 +756,197 @@ function criarIlhasDistantes() {
 
 // --- Sem. 5: Barcos a navegar em loop circular à volta das ilhas ---
 function criarBarco() {
-    // Configuração de cada barco: centro X, centro Z, raio, vel angular, fase, cor da vela
-    // Órbitas em águas abertas entre o nível e as ilhas distantes (sem colisões)
     var configs = [
-        { cx: -38, cz: -22, raio: 9, vel: 0.18, fase: 0,        corVela: 0xfafafa },
-        { cx: -42, cz:  20, raio: 9, vel: 0.13, fase: Math.PI,  corVela: 0xffe28a }
+        { cx: -71, cz: -30, raio: 6, vel: 0.18, fase: 0,        corVela: 0xfafafa },
+        { cx: -63, cz:  28, raio: 6, vel: 0.13, fase: Math.PI,  corVela: 0xffe28a }
     ];
 
     for (var b = 0; b < configs.length; b++) {
         var cfg = configs[b];
         var barco = new THREE.Group();
-        var casco = new THREE.Mesh(new THREE.BoxGeometry(4, 1.2, 1.6), new THREE.MeshBasicMaterial({ color: 0x8b4a2b }));
-        barco.add(casco);
-        var conves = new THREE.Mesh(new THREE.BoxGeometry(3.5, 0.2, 1.4), new THREE.MeshBasicMaterial({ color: 0xd4a574 }));
-        conves.position.y = 0.7;
-        barco.add(conves);
-        var mastro = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 4, 6), new THREE.MeshBasicMaterial({ color: 0x4a2a14 }));
-        mastro.position.set(0, 2.7, 0);
+
+        // Materiais partilhados por barco
+        var matCasco  = new THREE.MeshStandardMaterial({ color: 0x8b4513, roughness: 0.80 });
+        var matDeck   = new THREE.MeshStandardMaterial({ color: 0xd4956a, roughness: 0.75 });
+        var matMad    = new THREE.MeshStandardMaterial({ color: 0x4a2a0e, roughness: 0.88 });
+        var matVela   = new THREE.MeshBasicMaterial({ color: cfg.corVela, side: THREE.DoubleSide });
+        var matMetal  = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, roughness: 0.45, metalness: 0.75 });
+        var matBarril = new THREE.MeshStandardMaterial({ color: 0xa06030, roughness: 0.88 });
+
+        // === CASCO com proa afilada (BoxGeometry deformada) ===
+        // Orientação: Z+ = proa (frente), Z- = popa (trás)
+        var geoHull = new THREE.BoxGeometry(2.4, 1.5, 7.5, 1, 2, 8);
+        var posH = geoHull.attributes.position;
+        for (var hv = 0; hv < posH.count; hv++) {
+            var hz = posH.getZ(hv);
+            var hx = posH.getX(hv);
+            var hy = posH.getY(hv);
+            var newX = hx;
+            // Afinar proa: X encolhe de z=1.5 até z=3.75
+            if (hz > 1.5) {
+                var tBow = Math.min(1.0, (hz - 1.5) / 2.25);
+                newX *= (1.0 - tBow * 0.96);
+            }
+            // Fundo arredondado (bilge)
+            if (hy < -0.1) {
+                var tBilge = Math.min(1.0, (-hy - 0.1) / 0.65);
+                newX *= (1.0 - tBilge * 0.30);
+            }
+            posH.setX(hv, newX);
+        }
+        posH.needsUpdate = true;
+        geoHull.computeVertexNormals();
+        var hull = new THREE.Mesh(geoHull, matCasco);
+        hull.castShadow = true;
+        hull.receiveShadow = true;
+        barco.add(hull);
+
+        // Superestrutura da popa (castelo de popa)
+        var popaSupra = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.75, 1.6), matCasco);
+        popaSupra.position.set(0, 0.88, -3.0);
+        popaSupra.castShadow = true;
+        barco.add(popaSupra);
+
+        // === CONVÉS principal ===
+        var deck = new THREE.Mesh(new THREE.BoxGeometry(2.32, 0.14, 5.0), matDeck);
+        deck.position.set(0, 0.83, -0.85);
+        deck.receiveShadow = true;
+        barco.add(deck);
+
+        // Convés elevado da popa
+        var deckPopa = new THREE.Mesh(new THREE.BoxGeometry(2.1, 0.14, 1.55), matDeck);
+        deckPopa.position.set(0, 1.30, -3.0);
+        barco.add(deckPopa);
+
+        // === MASTRO: base no convés (y≈0.83), topo a y≈9.8 ===
+        var mastro = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.13, 9.0, 8), matMad);
+        mastro.position.set(0, 5.3, 0.1);
+        mastro.castShadow = true;
         barco.add(mastro);
-        var vela = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 3.0), new THREE.MeshBasicMaterial({ color: cfg.corVela, side: THREE.DoubleSide }));
-        vela.position.set(0.05, 3.0, 0);
-        vela.rotation.y = Math.PI / 2;
+
+        // Verga principal (y=8.0)
+        var verga = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 5.4, 6), matMad);
+        verga.rotation.z = Math.PI / 2;
+        verga.position.set(0, 8.0, 0.1);
+        barco.add(verga);
+
+
+        // Pau de proa (bowsprit) inclinado para a frente
+        var bowsprit = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.07, 2.5, 6), matMad);
+        bowsprit.rotation.x = -Math.PI / 9;
+        bowsprit.position.set(0, 1.25, 3.2);
+        barco.add(bowsprit);
+
+        // === VELA PRINCIPAL com billow ===
+        // Topo alinhado com verga (y=8.0), altura=3.5 → centro y=6.25
+        var geoVela = new THREE.PlaneGeometry(5.0, 3.5, 6, 5);
+        var posVela = geoVela.attributes.position;
+        for (var vi = 0; vi < posVela.count; vi++) {
+            var velX = posVela.getX(vi);
+            var velY = posVela.getY(vi);
+            var normVX = velX / 2.5;
+            var normVY = (velY + 1.75) / 3.5;
+            var billow = Math.cos(normVX * Math.PI * 0.5) * Math.sin(normVY * Math.PI) * 1.4;
+            var ripple = Math.sin(normVX * Math.PI * 1.5) * Math.sin(normVY * Math.PI * 2.0) * 0.18;
+            posVela.setZ(vi, billow + ripple);
+        }
+        posVela.needsUpdate = true;
+        geoVela.computeVertexNormals();
+        var vela = new THREE.Mesh(geoVela, matVela);
+        vela.position.set(0, 6.25, 0.12);
         barco.add(vela);
-        var bandeira = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.35), new THREE.MeshBasicMaterial({ color: 0xcc1111, side: THREE.DoubleSide }));
-        bandeira.position.set(0.35, 4.7, 0);
-        bandeira.rotation.y = Math.PI / 2;
+
+
+        // === CROW'S NEST ===
+        var cesto = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.38, 0.42, 8), matDeck);
+        cesto.position.set(0, 9.6, 0.1);
+        barco.add(cesto);
+
+        // Bandeira ondulante no topo do crow's nest (simula vento)
+        var geoBand = new THREE.PlaneGeometry(1.5, 0.55, 10, 4);
+        var posBand = geoBand.attributes.position;
+        for (var bv = 0; bv < posBand.count; bv++) {
+            var bx = posBand.getX(bv);
+            var by = posBand.getY(bv);
+            var t = (bx + 0.75) / 1.5;
+            posBand.setZ(bv, Math.sin(t * Math.PI) * 0.38);
+            posBand.setY(bv, by - t * 0.12);
+        }
+        posBand.needsUpdate = true;
+        geoBand.computeVertexNormals();
+        var bandeira = new THREE.Mesh(
+            geoBand,
+            new THREE.MeshBasicMaterial({ color: 0xcc1111, side: THREE.DoubleSide })
+        );
+        // Deslocar para que o bordo esquerdo (t=0) fique no mastro (x=0)
+        bandeira.position.set(0.75, 9.85, 0.1);
         barco.add(bandeira);
+
+        // === CORDAS DE RIGGING ===
+        var barcoRef = barco;
+        var matMadRef = matMad;
+        function addCorda(x1, y1, z1, x2, y2, z2) {
+            var dir = new THREE.Vector3(x2 - x1, y2 - y1, z2 - z1);
+            var len = dir.length();
+            var mesh = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.016, len, 4), matMadRef);
+            mesh.position.set((x1 + x2) / 2, (y1 + y2) / 2, (z1 + z2) / 2);
+            mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.normalize());
+            barcoRef.add(mesh);
+        }
+        addCorda(-2.7, 8.0, 0.1,  0, 2.42, 2.77);  // forestay E → ponta do bowsprit
+        addCorda( 2.7, 8.0, 0.1,  0, 2.42, 2.77);  // forestay D → ponta do bowsprit
+        addCorda(0, 9.8, 0.1,  0,    1.2, -3.8);   // backstay → popa
+        addCorda(-2.7, 8.0, 0.1, -1.15, 0.9, 1.5); // shroud E superior
+        addCorda( 2.7, 8.0, 0.1,  1.15, 0.9, 1.5); // shroud D superior
+
+        // === CANHÕES (um em cada borda) ===
+        for (var cl = 0; cl < 2; cl++) {
+            var lado = cl === 0 ? -1 : 1;
+            var baseCan = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.24, 0.65), matDeck);
+            baseCan.position.set(lado * 0.9, 0.96, 1.1);
+            barco.add(baseCan);
+            var canhao = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.11, 1.0, 8), matMetal);
+            canhao.rotation.z = Math.PI / 2;
+            canhao.position.set(lado * 1.18, 0.96, 1.1);
+            barco.add(canhao);
+        }
+
+        // === BARRIS no convés ===
+        var barisPosZ = [-1.0, -1.0, -1.2];
+        var barisX    = [-0.5,  0.1,  0.6];
+        for (var bi2 = 0; bi2 < 3; bi2++) {
+            var barril = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.16, 0.38, 8), matBarril);
+            barril.position.set(barisX[bi2], 0.97, barisPosZ[bi2]);
+            barco.add(barril);
+            for (var ai = 0; ai < 2; ai++) {
+                var aro = new THREE.Mesh(new THREE.TorusGeometry(0.165, 0.02, 4, 12), matMetal);
+                aro.rotation.x = Math.PI / 2;
+                aro.position.set(barisX[bi2], 0.97 + (ai === 0 ? -0.1 : 0.1), barisPosZ[bi2]);
+                barco.add(aro);
+            }
+        }
+
+        // === RAILING (postes + corrimão) ===
+        var postes = [
+            [ 1.18, 2.4], [ 1.18, 0.9], [ 1.18, -0.6], [ 1.18, -2.0],
+            [-1.18, 2.4], [-1.18, 0.9], [-1.18, -0.6], [-1.18, -2.0],
+            [ 0.65, -3.05], [-0.65, -3.05]
+        ];
+        for (var ri = 0; ri < postes.length; ri++) {
+            var poste = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.04, 0.75, 5), matMad);
+            poste.position.set(postes[ri][0], 0.93, postes[ri][1]);
+            barco.add(poste);
+        }
+        var railE = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 5.1), matMad);
+        railE.position.set(-1.18, 1.32, -0.3);
+        barco.add(railE);
+        var railD = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 5.1), matMad);
+        railD.position.set( 1.18, 1.32, -0.3);
+        barco.add(railD);
+        var railPopa = new THREE.Mesh(new THREE.BoxGeometry(2.4, 0.05, 0.05), matMad);
+        railPopa.position.set(0, 1.32, -3.05);
+        barco.add(railPopa);
+
         barco.userData = { cx: cfg.cx, cz: cfg.cz, raio: cfg.raio, vel: cfg.vel, fase: cfg.fase };
         barcos.push(barco);
         cena.add(barco);
@@ -2081,7 +2246,7 @@ function loop() {
         var ang = tempo * ud.vel + ud.fase;
         b.position.x = ud.cx + Math.cos(ang) * ud.raio;
         b.position.z = ud.cz + Math.sin(ang) * ud.raio;
-        b.position.y = -0.5 + Math.sin(tempo * 0.8 + ud.fase) * 0.15;
+        b.position.y = -2.9 + Math.sin(tempo * 0.8 + ud.fase) * 0.15;
         // Proa apontada na direção tangente do movimento
         b.rotation.y = -ang;
         b.rotation.z = Math.sin(tempo * 0.8 + ud.fase) * 0.04;
