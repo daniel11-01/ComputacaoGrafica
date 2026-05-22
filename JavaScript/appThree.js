@@ -633,7 +633,7 @@ function criarIlhasDistantes() {
         // Palmeiras — escala aumentada para serem visíveis à distância
         var escalaBase = d[2] * 0.30;
         // Densidade aumentada
-        var numPalm = Math.max(10, Math.floor(d[2] * 2.5 + rngIlha.range(0, 4)));
+        var numPalm = Math.max(3, Math.floor(d[2] * 0.8 + rngIlha.range(0, 2)));
 
         for (var p = 0; p < numPalm; p++) {
             // Distribuição em "anéis" para preencher sem todas no centro
@@ -1053,125 +1053,79 @@ var texturaCascaPartilhada = carregadorTexturas.load('https://threejs.org/exampl
 texturaCascaPartilhada.wrapS = texturaCascaPartilhada.wrapT = THREE.RepeatWrapping;
 texturaCascaPartilhada.repeat.set(1, 3);
 
-// TIPO A: Palmeira Tropical (tronco curvo + folhas cross-plane + cocos)
+// TIPO A: Palmeira Tropical (tronco reto segmentado + folhas largas em leque)
 function criarPalmeira(posX, posZ, escala) {
     var grupo = new THREE.Group();
     escala = escala || 1.0;
     var seed = Math.floor(posX * 100 + posZ * 7);
     var rng = criarRNG(seed);
 
-    var materialTronco = new THREE.MeshStandardMaterial({ map: texturaCascaPartilhada, color: 0x8B5E3C, roughness: 0.85 });
-    var materialAnel = new THREE.MeshStandardMaterial({ color: 0x6B4226, roughness: 0.95 });
+    var matTronco = new THREE.MeshStandardMaterial({ color: 0xD4A04A, roughness: 0.85 });
+    var matAnel   = new THREE.MeshStandardMaterial({ color: 0xB8843A, roughness: 0.90 });
+    var matFolha  = new THREE.MeshStandardMaterial({ color: 0x6DB53A, roughness: 0.5, side: THREE.DoubleSide });
+    var matFolhaClara = new THREE.MeshStandardMaterial({ color: 0x88CC4A, roughness: 0.5, side: THREE.DoubleSide });
 
-    var alturaTronco = 6 + rng.range(0, 2);
-    var numSeccoes = 12;
-    var alturaSeccao = alturaTronco / numSeccoes;
-    var posAtual = new THREE.Vector3(0, 0, 0);
-    var dirAtual = new THREE.Vector3(0, 1, 0);
-    var inclinacao = rng.range(-0.08, 0.08);
+    var alturaTronco = 5.5 + rng.range(0, 1.5);
+    var numSeg = 9;
+    var hSeg = alturaTronco / numSeg;
 
-    var pontosTopo = [];
+    for (var i = 0; i < numSeg; i++) {
+        var t = i / (numSeg - 1);
+        var rBase = 0.28 - t * 0.12;
+        var rTopo = 0.25 - t * 0.12;
+        if (rBase < 0.10) rBase = 0.10;
+        if (rTopo < 0.09) rTopo = 0.09;
 
-    for (var i = 0; i < numSeccoes; i++) {
-        var progresso = i / numSeccoes;
-        var raioBase = 0.35 - progresso * 0.2;
-        var raioTopo = 0.32 - progresso * 0.2;
-        if (raioBase < 0.1) raioBase = 0.1;
-        if (raioTopo < 0.08) raioTopo = 0.08;
-
-        dirAtual.x += rng.range(-0.04, 0.04) + inclinacao * 0.01;
-        dirAtual.z += rng.range(-0.04, 0.04);
-        dirAtual.normalize();
-
-        var proxPos = posAtual.clone().add(dirAtual.clone().multiplyScalar(alturaSeccao));
-        var centro = posAtual.clone().add(proxPos).multiplyScalar(0.5);
-        var diff = proxPos.clone().sub(posAtual);
-
-        var segmento = new THREE.Mesh(
-            new THREE.CylinderGeometry(raioTopo, raioBase, diff.length(), 8),
-            materialTronco
+        var seg = new THREE.Mesh(
+            new THREE.CylinderGeometry(rTopo, rBase, hSeg * 0.78, 8),
+            matTronco
         );
-        segmento.position.copy(centro);
-        var quat = new THREE.Quaternion();
-        quat.setFromUnitVectors(new THREE.Vector3(0, 1, 0), diff.clone().normalize());
-        segmento.quaternion.copy(quat);
-        segmento.castShadow = true;
-        grupo.add(segmento);
+        seg.position.y = i * hSeg + hSeg * 0.39;
+        seg.castShadow = true;
+        grupo.add(seg);
 
-        if (i > 0 && i % 2 === 0) {
-            var anel = new THREE.Mesh(
-                new THREE.TorusGeometry(raioBase + 0.03, 0.025, 6, 12),
-                materialAnel
-            );
-            anel.position.copy(posAtual);
-            var torusQuat = new THREE.Quaternion();
-            torusQuat.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dirAtual.clone());
-            anel.quaternion.copy(torusQuat);
-            grupo.add(anel);
-        }
-
-        posAtual = proxPos;
-        pontosTopo.push(posAtual.clone());
+        var anel = new THREE.Mesh(
+            new THREE.CylinderGeometry(rBase + 0.04, rBase + 0.04, hSeg * 0.24, 8),
+            matAnel
+        );
+        anel.position.y = i * hSeg;
+        grupo.add(anel);
     }
 
-    var topoTronco = posAtual.clone();
+    var topoY = alturaTronco;
+    var numFolhas = 8;
 
-    var materialFolha = new THREE.MeshStandardMaterial({ color: 0x2d8f2d, roughness: 0.5, side: THREE.DoubleSide });
-    var materialFolhaClara = new THREE.MeshStandardMaterial({ color: 0x4ab34a, roughness: 0.5, side: THREE.DoubleSide });
-
-    var numFolhas = 7;
     for (var f = 0; f < numFolhas; f++) {
-        var anguloFolha = (f / numFolhas) * Math.PI * 2 + rng.range(-0.2, 0.2);
-        var matFolha = f % 2 === 0 ? materialFolha : materialFolhaClara;
+        var anguloFolha = (f / numFolhas) * Math.PI * 2;
+        var mat = f % 2 === 0 ? matFolha : matFolhaClara;
 
-        var grupoFolha = new THREE.Group();
-
-        for (var p = 0; p < 2; p++) {
-            var folha = new THREE.Mesh(
-                new THREE.PlaneGeometry(0.7, 3.5, 2, 8),
-                matFolha
-            );
-
-            var posFolha = folha.geometry.attributes.position;
-            for (var v = 0; v < posFolha.count; v++) {
-                var yLocal = posFolha.getY(v);
-                var xLocal = posFolha.getX(v);
-                var fator = (yLocal + 1.75) / 3.5;
-                var curva = fator * fator * 1.8;
-                posFolha.setZ(v, posFolha.getZ(v) - curva);
-                var escalaFolhaX = 1.0 - fator * 0.65;
-                posFolha.setX(v, xLocal * escalaFolhaX);
-                var onda = Math.sin(fator * Math.PI * 3) * 0.06;
-                posFolha.setX(v, posFolha.getX(v) + onda);
-            }
-            posFolha.needsUpdate = true;
-            folha.geometry.computeVertexNormals();
-
-            folha.rotation.y = p * Math.PI / 3;
-            // castShadow removido — folhas cross-plane são planos finos
-            grupoFolha.add(folha);
+        var geoFolha = new THREE.PlaneGeometry(0.9, 0.85, 4, 12);
+        geoFolha.translate(0, 0.425, 0); // base em y=0, ponta em y=0.85
+        var pos = geoFolha.attributes.position;
+        for (var v = 0; v < pos.count; v++) {
+            var yL = pos.getY(v);
+            var xL = pos.getX(v);
+            var tv = yL / 0.85; // 0=base, 1=ponta
+            // Forma: estreita na base e ponta, larga no meio
+            var larg = Math.sin(tv * Math.PI);
+            if (larg < 0.12) larg = 0.12;
+            pos.setX(v, (xL / 0.45) * larg * 0.85);
+            // Curva de droop: ponta cai para baixo em espaço local
+            pos.setZ(v, -tv * tv * tv * 2.0);
         }
+        pos.needsUpdate = true;
+        geoFolha.computeVertexNormals();
 
-        grupoFolha.position.copy(topoTronco);
+        var folha = new THREE.Mesh(geoFolha, mat);
+        var grupoFolha = new THREE.Group();
+        grupoFolha.rotation.order = 'YXZ'; // Y primeiro (direção), X depois em eixo local → leque simétrico
+        grupoFolha.add(folha);
+        grupoFolha.position.y = topoY;
         grupoFolha.rotation.y = anguloFolha;
-        grupoFolha.rotation.x = -0.35 - rng.range(0, 0.25);
+        grupoFolha.rotation.x = -0.75;
         grupoFolha.userData.anguloBase = grupoFolha.rotation.x;
         grupoFolha.userData.fase = f * 0.9;
         grupo.add(grupoFolha);
-    }
-
-    var materialCoco = new THREE.MeshStandardMaterial({ color: 0x5C3317, roughness: 0.7 });
-    var numCocos = 2 + Math.floor(rng.next() * 2);
-    for (var c = 0; c < numCocos; c++) {
-        var anguloCoco = (c / numCocos) * Math.PI * 2 + rng.range(0, 0.5);
-        var coco = new THREE.Mesh(new THREE.SphereGeometry(0.18, 8, 6), materialCoco);
-        coco.position.set(
-            topoTronco.x + Math.cos(anguloCoco) * 0.3,
-            topoTronco.y - 0.3,
-            topoTronco.z + Math.sin(anguloCoco) * 0.3
-        );
-        // castShadow removido — cocos pequenos, sombra impercetível
-        grupo.add(coco);
     }
 
     return finalizarVegetacao(grupo, posX, posZ, escala, 'palmeira', true);
