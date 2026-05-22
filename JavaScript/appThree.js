@@ -20,7 +20,7 @@ var relogio = new THREE.Clock();
 
 // Referências para objetos do cenário
 var chao, sol, nuvens = [];
-var aneisDecorativos = [], grupoLooping, vegetacao = [], palmeiras = [];
+var aneisDecorativos = [], vegetacao = [], palmeiras = [];
 var sonicPlaceholder, sonicBola, modoBola = false, oceano, espumaOndas = [];
 var ceu, ilhasDistantes = [], barcos = [], gaivotas = [];
 // Passo 3: cache de materials partilhados para folhas de árvores
@@ -383,30 +383,62 @@ function criarSegmentoTerreno(x, z, largX, compZ, altura, elevacao, temRelva) {
 function criarTerreno() {
     inicializarMateriaisTerreno();
 
-    // === Nível linear PLANO ao longo do eixo Z ===
-    // Tudo ao mesmo nível y=0 para criar uma superfície contínua.
-    // z=+37 (início) → z=-37 (fim)
-    // Loop entry ramp: z≈+3 → z=-1, Loop exit ramp: z=-15 → z=-19
+    // === Layout do Nível 1 ===
+    // Progressão: Z+ (spawn) → Z- (fim), com 3 plataformas separadas por 2 espaços.
+    // Espaço 1 (z+15 → z+5): ponte (a colocar)
+    // Espaço 2 (z=-20 → z=-36): loop GLB (+6 unidades para o modelo caber)
+    // No fim da Plat 3, rampa vira à direita para a Plat 4 onde está a placa final.
 
-    // Plataforma única contínua ANTES do loop (z=+37 a z=-2)
-    criarSegmentoTerreno(0, 17.5, 12, 39, 4, 0);
+    // --- Plataforma 1: Spawn → primeiro espaço ---
+    criarSegmentoTerreno(0, 27.5, 12, 25, 4, 0);   // z=+40 a z=+15
 
-    // Plataforma única contínua DEPOIS do loop (z=-15 a z=-37)
-    criarSegmentoTerreno(0, -26, 12, 22, 4, 0);
+    // --- Plataforma 2: segundo segmento ---
+    criarSegmentoTerreno(0, -7.5, 12, 25, 4, 0);   // z=+5  a z=-20
 
-    // Plataformas laterais decorativas (simétricas, ao mesmo nível)
-    var platLat = [[15, 20], [-22, 16]];
-    for (var pl = 0; pl < platLat.length; pl++) {
-        criarSegmentoTerreno(-12, platLat[pl][0], 6, platLat[pl][1], 3, 0);
-        criarSegmentoTerreno(12, platLat[pl][0], 6, platLat[pl][1], 3, 0);
+    // --- Plataforma 3: terceiro segmento (recuou 6 u por causa do loop) ---
+    criarSegmentoTerreno(0, -46, 12, 20, 4, 0);    // z=-36 a z=-56
+
+    // --- Plataforma 4: continuação do nível ---
+    criarSegmentoTerreno(0, -73.5, 12, 25, 4, 0);  // z=-61 a z=-86
+
+    // === PRAIA: Areia com perfil elíptico + degradê de cor (areia→mar) ===
+    var segsX = 48, segsZ = 72;
+    var geoAreia = new THREE.PlaneGeometry(130, 180, segsX, segsZ);
+    geoAreia.rotateX(-Math.PI / 2);
+    var posAreia = geoAreia.attributes.position;
+    var rX = 65, rZ = 90;
+    // Cores: areia dourada → areia molhada → cor do mar
+    var corAreia  = new THREE.Color(0xf2d98b);
+    var corMolhada = new THREE.Color(0xc8a84b);
+    var corMar    = new THREE.Color(0x0e5e8c);
+    var cores = [];
+    for (var v = 0; v < posAreia.count; v++) {
+        var vx = posAreia.getX(v);
+        var vz = posAreia.getZ(v);
+        var distElip = Math.sqrt((vx / rX) * (vx / rX) + (vz / rZ) * (vz / rZ));
+        var t = Math.max(0, (distElip - 0.4) / 0.6);
+        var descida = t > 0 ? (1 - Math.cos(t * Math.PI * 0.5)) * 4.5 : 0;
+        if (distElip > 1.0) descida = 4.5 + (distElip - 1.0) * 3;
+        posAreia.setY(v, -descida);
+        // Degradê: 0→0.5 areia→molhada, 0.5→1+ molhada→mar
+        var cor = new THREE.Color();
+        if (t < 0.5) {
+            cor.lerpColors(corAreia, corMolhada, t * 2);
+        } else {
+            cor.lerpColors(corMolhada, corMar, Math.min(1, (t - 0.5) * 2));
+        }
+        cores.push(cor.r, cor.g, cor.b);
     }
-
-    // === PRAIA: Areia à volta das plataformas ===
-    // Sem. 3: textura procedural da areia aplicada via map
-    var materialAreia = new THREE.MeshStandardMaterial({ map: criarTexturaAreia(), color: 0xf2d98b, roughness: 0.9 });
-    var areia = new THREE.Mesh(new THREE.PlaneGeometry(70, 100), materialAreia);
-    areia.rotation.x = -Math.PI / 2;
-    areia.position.set(0, -2.8, 0);
+    posAreia.needsUpdate = true;
+    geoAreia.setAttribute('color', new THREE.Float32BufferAttribute(cores, 3));
+    geoAreia.computeVertexNormals();
+    var materialAreia = new THREE.MeshStandardMaterial({
+        map: criarTexturaAreia(),
+        vertexColors: true,
+        roughness: 0.9
+    });
+    var areia = new THREE.Mesh(geoAreia, materialAreia);
+    areia.position.set(0, -2.8, -20);
     areia.receiveShadow = true;
     cena.add(areia);
 
@@ -430,53 +462,7 @@ function criarTerreno() {
     oceano.receiveShadow = true;
     cena.add(oceano);
 
-    // === ONDAS DE PRAIA: faixas que avançam e recuam ===
-    var materialOndaBranca = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.7, side: THREE.DoubleSide });
-    var materialOndaClara = new THREE.MeshBasicMaterial({ color: 0x6ec8e8, transparent: true, opacity: 0.5, side: THREE.DoubleSide });
-
-    // 4 lados da praia: +X, -X, +Z, -Z
-    var ladosPraia = [
-        { eixo: 'x', sinal: 1, limAreia: 35, comp: 100, dir: 'z' },
-        { eixo: 'x', sinal: -1, limAreia: -35, comp: 100, dir: 'z' },
-        { eixo: 'z', sinal: 1, limAreia: 50, comp: 70, dir: 'x' },
-        { eixo: 'z', sinal: -1, limAreia: -50, comp: 70, dir: 'x' }
-    ];
-
-    for (var lado = 0; lado < ladosPraia.length; lado++) {
-        var l = ladosPraia[lado];
-        for (var w = 0; w < 3; w++) {
-            var mat = w === 0 ? materialOndaBranca : materialOndaClara;
-            var larguraOnda = 1.2 - w * 0.3;
-
-            var ondaGeo;
-            if (l.dir === 'z') {
-                ondaGeo = new THREE.PlaneGeometry(larguraOnda, l.comp, 1, 30);
-            } else {
-                ondaGeo = new THREE.PlaneGeometry(l.comp, larguraOnda, 30, 1);
-            }
-
-            var ondaMesh = new THREE.Mesh(ondaGeo, mat.clone());
-            ondaMesh.rotation.x = -Math.PI / 2;
-            ondaMesh.position.y = -2.65;
-
-            var dist = l.limAreia + l.sinal * (3 + w * 2.5);
-            if (l.eixo === 'x') {
-                ondaMesh.position.x = dist;
-                ondaMesh.position.z = 0;
-            } else {
-                ondaMesh.position.z = dist;
-                ondaMesh.position.x = 0;
-            }
-
-            ondaMesh.userData.ladoPraia = l;
-            ondaMesh.userData.indicOnda = w;
-            ondaMesh.userData.distBase = 3 + w * 2.5;
-            ondaMesh.userData.fase = w * 2.1 + lado * 1.5;
-
-            espumaOndas.push(ondaMesh);
-            cena.add(ondaMesh);
-        }
-    }
+    // === ONDAS DE PRAIA: removidas (performance + visual) ===
 }
 
 // --- Sem. 0/1: Skybox retro (céu gradiente, sol, nuvens animadas) ---
@@ -726,55 +712,23 @@ function criarBarco() {
     for (var b = 0; b < configs.length; b++) {
         var cfg = configs[b];
         var barco = new THREE.Group();
-
-        // Casco
-        var casco = new THREE.Mesh(
-            new THREE.BoxGeometry(4, 1.2, 1.6),
-            new THREE.MeshBasicMaterial({ color: 0x8b4a2b })
-        );
+        var casco = new THREE.Mesh(new THREE.BoxGeometry(4, 1.2, 1.6), new THREE.MeshBasicMaterial({ color: 0x8b4a2b }));
         barco.add(casco);
-
-        // Convés
-        var conves = new THREE.Mesh(
-            new THREE.BoxGeometry(3.5, 0.2, 1.4),
-            new THREE.MeshBasicMaterial({ color: 0xd4a574 })
-        );
+        var conves = new THREE.Mesh(new THREE.BoxGeometry(3.5, 0.2, 1.4), new THREE.MeshBasicMaterial({ color: 0xd4a574 }));
         conves.position.y = 0.7;
         barco.add(conves);
-
-        // Mastro
-        var mastro = new THREE.Mesh(
-            new THREE.CylinderGeometry(0.08, 0.08, 4, 6),
-            new THREE.MeshBasicMaterial({ color: 0x4a2a14 })
-        );
+        var mastro = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 4, 6), new THREE.MeshBasicMaterial({ color: 0x4a2a14 }));
         mastro.position.set(0, 2.7, 0);
         barco.add(mastro);
-
-        // Vela (plano com side DoubleSide)
-        var vela = new THREE.Mesh(
-            new THREE.PlaneGeometry(2.2, 3.0),
-            new THREE.MeshBasicMaterial({ color: cfg.corVela, side: THREE.DoubleSide })
-        );
+        var vela = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 3.0), new THREE.MeshBasicMaterial({ color: cfg.corVela, side: THREE.DoubleSide }));
         vela.position.set(0.05, 3.0, 0);
         vela.rotation.y = Math.PI / 2;
         barco.add(vela);
-
-        // Bandeira no topo do mastro
-        var bandeira = new THREE.Mesh(
-            new THREE.PlaneGeometry(0.6, 0.35),
-            new THREE.MeshBasicMaterial({ color: 0xcc1111, side: THREE.DoubleSide })
-        );
+        var bandeira = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.35), new THREE.MeshBasicMaterial({ color: 0xcc1111, side: THREE.DoubleSide }));
         bandeira.position.set(0.35, 4.7, 0);
         bandeira.rotation.y = Math.PI / 2;
         barco.add(bandeira);
-
-        barco.userData = {
-            cx: cfg.cx,
-            cz: cfg.cz,
-            raio: cfg.raio,
-            vel: cfg.vel,
-            fase: cfg.fase
-        };
+        barco.userData = { cx: cfg.cx, cz: cfg.cz, raio: cfg.raio, vel: cfg.vel, fase: cfg.fase };
         barcos.push(barco);
         cena.add(barco);
     }
@@ -828,73 +782,34 @@ function criarLuzes() {
     cena.add(luzDirecional);
 }
 
-// --- Sem. 2: Looping (CatmullRomCurve3 + TubeGeometry + suportes + rampas) ---
+// --- Sem. 2: Looping — modelo GLB do Blender ---
 function criarLooping() {
-    grupoLooping = new THREE.Group();
+    carregadorGLTF.load('assets/loop.glb', function(gltf) {
+        var loop = gltf.scene;
 
-    var pontosCurva = [];
-    var raio = 6;
-    var segmentos = 64;
+        // Escala automática: altura do loop ≈ 12 unidades
+        var box = new THREE.Box3().setFromObject(loop);
+        var size = new THREE.Vector3();
+        box.getSize(size);
+        var escala = 16 / Math.max(size.x, size.y, size.z);
+        loop.scale.setScalar(escala);
 
-    for (var i = 0; i <= segmentos; i++) {
-        var angulo = (i / segmentos) * Math.PI * 2;
-        var x = 0;
-        var y = raio + Math.sin(angulo) * raio;
-        var z = Math.cos(angulo) * raio;
-        pontosCurva.push(new THREE.Vector3(x, y, z));
-    }
+        // Re-calcular bbox após escala — centrar em X, fundo a y=0
+        box.setFromObject(loop);
+        var centroX = (box.min.x + box.max.x) / 2;
+        loop.position.set(-centroX, -box.min.y - 2.3, -28.75);
 
-    var curva = new THREE.CatmullRomCurve3(pontosCurva, true);
+        loop.traverse(function(node) {
+            if (node.isMesh) {
+                node.castShadow    = true;
+                node.receiveShadow = true;
+            }
+        });
 
-    // Sem. 3: textura de madeira via TextureLoader (URL pública CC0)
-    var texturaPista = carregadorTexturas.load('https://threejs.org/examples/textures/hardwood2_diffuse.jpg');
-    texturaPista.wrapS = texturaPista.wrapT = THREE.RepeatWrapping;
-    texturaPista.repeat.set(1, 8);
-    texturaPista.colorSpace = THREE.SRGBColorSpace;
-    var materialPista = new THREE.MeshStandardMaterial({ map: texturaPista, color: 0x8B4513, roughness: 0.6, metalness: 0.1, side: THREE.DoubleSide });
-
-    var geometriaTubo = new THREE.TubeGeometry(curva, 128, 0.8, 12, true);
-    var tubo = new THREE.Mesh(geometriaTubo, materialPista);
-    tubo.castShadow = true;
-    tubo.receiveShadow = true;
-    grupoLooping.add(tubo);
-
-    var materialGrade = new THREE.MeshStandardMaterial({ color: 0xffd700, metalness: 0.7, roughness: 0.3 });
-
-    var numSuportes = 16;
-    for (var s = 0; s < numSuportes; s++) {
-        var t = s / numSuportes;
-        var ponto = curva.getPointAt(t);
-        var tangente = curva.getTangentAt(t);
-
-        var suporte = new THREE.Mesh(
-            new THREE.CylinderGeometry(0.08, 0.08, 1.8, 8),
-            materialGrade
-        );
-        suporte.position.copy(ponto);
-
-        var eixo = new THREE.Vector3(0, 1, 0);
-        var quaternion = new THREE.Quaternion();
-        quaternion.setFromUnitVectors(eixo, tangente.normalize());
-        suporte.quaternion.copy(quaternion);
-        // Passo 2: castShadow removido — suportes finos, sombra = ponto impercetível
-        grupoLooping.add(suporte);
-    }
-
-    var materialEntrada = new THREE.MeshStandardMaterial({ color: 0x39b54a, roughness: 0.5 });
-
-    // Rampas de entrada e saída
-    var rampasData = [{z: 9, rot: -0.04}, {z: -9, rot: 0.04}];
-    for (var r = 0; r < rampasData.length; r++) {
-        var rampa = new THREE.Mesh(new THREE.BoxGeometry(12, 0.5, 14), materialEntrada);
-        rampa.position.set(0, 0.15, rampasData[r].z);
-        rampa.rotation.x = rampasData[r].rot;
-        rampa.receiveShadow = true;
-        grupoLooping.add(rampa);
-    }
-
-    grupoLooping.position.set(0, 0, -8);
-    cena.add(grupoLooping);
+        cena.add(loop);
+    }, undefined, function(err) {
+        console.error('[loop.glb] erro ao carregar:', err);
+    });
 }
 
 // --- Sem. 2 + Sem. 3: Vegetação Procedural (ramificação recursiva, folhas cross-plane, 3 presets) ---
@@ -1237,18 +1152,34 @@ function criarArbusto(posX, posZ, escala) {
 
 // Posicionamento de toda a vegetação (3 tipos, simétricos)
 function criarVegetacao() {
-    // Dados: [z, escala] — colocadas simetricamente a ±x
-    var palmZ = [[34,1.1],[24,1.0],[12,0.9],[-18,1.0],[-30,1.05]];
+    // Plataformas: largX=12 → x vai de -6 a +6. Palmeiras em x=±5 são as únicas dentro.
+    // Plat1: z=+15→+40 | Plat2: z=-20→+5 | Plat3: z=-30→-50 | Plat4: z=-55→-80
+    // Palmeiras externas (x=±5) nas plataformas
+    var palmZ = [
+        // Plat1
+        [38,1.0],[30,1.1],[22,1.0],[18,0.9],
+        // Plat2
+        [3,0.9],[-5,1.0],[-15,1.0],
+        // Plat3
+        [-39,1.05],[-48,1.0],[-54,0.9],
+        // Plat4
+        [-64,1.0],[-72,1.1],[-78,0.9],[-83,1.0]
+    ];
     for (var i = 0; i < palmZ.length; i++) {
         criarPalmeira(-5, palmZ[i][0], palmZ[i][1]);
         criarPalmeira(5, palmZ[i][0], palmZ[i][1]);
     }
-    var arvZ = [[20,1.1],[10,1.0],[-18,1.0],[-26,0.9]];
-    for (var j = 0; j < arvZ.length; j++) {
-        criarArvoreRamificada(-12, arvZ[j][0], arvZ[j][1]);
-        criarArvoreRamificada(12, arvZ[j][0], arvZ[j][1]);
-    }
-    var arbZ = [[36,1.0],[28,1.1],[18,0.9],[8,1.0],[-20,1.0],[-28,0.9],[-34,0.8]];
+    // Arbustos (x=±4) — mesmas plataformas
+    var arbZ = [
+        // Plat1
+        [35,1.0],[27,1.1],[19,0.9],
+        // Plat2
+        [1,0.9],[-8,1.0],[-17,1.0],
+        // Plat3
+        [-42,0.8],[-50,1.0],
+        // Plat4
+        [-67,0.9],[-75,1.0],[-81,0.8]
+    ];
     for (var k = 0; k < arbZ.length; k++) {
         criarArbusto(-4, arbZ[k][0], arbZ[k][1]);
         criarArbusto(4, arbZ[k][0], arbZ[k][1]);
@@ -1265,8 +1196,8 @@ function criarAneis() {
         [0,1.5,28],[0,1.5,24],[0,1.5,20],[0,1.5,16],[0,1.5,12],
         [0,1.5,6],[0,2.0,4],[0,2.5,2],[0,2.0,0],[0,1.5,-2],
         [0,8,-8],[0,13,-8],
-        [0,1.5,-18],[0,1.5,-22],[0,1.5,-26],
-        [-2,1.5,-34],[0,1.8,-34],[2,1.5,-34]
+        [0,1.5,-18],[0,1.5,-24],[0,1.5,-32],
+        [-2,1.5,-40],[0,1.8,-40],[2,1.5,-40]
     ];
 
     var materialBrilho = new THREE.MeshBasicMaterial({ color: 0xffee88 });
@@ -1310,7 +1241,7 @@ function criarSonicPlaceholder() {
         });
     });
 
-    sonicPlaceholder.position.set(0, 0.35, 34);
+    sonicPlaceholder.position.set(0, 0.35, 39);
     cena.add(sonicPlaceholder);
 
     // Bola — sonic_bola.glb (ativada com Espaço)
@@ -1327,7 +1258,7 @@ function criarSonicPlaceholder() {
         bola.rotation.x = -Math.PI / 2;
         var raio = (size.y * escalaAlvo) / 2;
         sonicBola.userData.raio = raio;
-        sonicBola.position.set(0, 0.35 + raio, 34);
+        sonicBola.position.set(0, 0.35 + raio, 39);
         bola.traverse(function(node) {
             if (node.isMesh) { node.castShadow = true; node.receiveShadow = true; }
         });
@@ -1534,26 +1465,30 @@ function criarCheckpoint(x, y, z) {
     return grupo;
 }
 
-// Ponte: série de BoxGeometry (tábuas) com CylinderGeometry (cordas)
-function criarPonte(x, y, z, comprimento, numTabuas) {
+// Ponte: série de BoxGeometry (tábuas) com CylinderGeometry (cordas + corrimãos)
+function criarPonte(x, y, z, comprimento, numTabuas, largura) {
     var grupo = new THREE.Group();
     numTabuas = numTabuas || 8;
+    largura = largura || 10;
 
     var materialTabua = new THREE.MeshStandardMaterial({ color: 0x8B6B3D, roughness: 0.8 });
     var materialCorda = new THREE.MeshStandardMaterial({ color: 0x5A4020, roughness: 0.9 });
 
     var espacamento = comprimento / numTabuas;
+    var meiaLarg = largura / 2;
 
+    // Cordas principais nas laterais (ao nível das tábuas)
     for (var cx = -1; cx <= 1; cx += 2) {
-        var corda = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, comprimento, 4), materialCorda);
+        var corda = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, comprimento, 4), materialCorda);
         corda.rotation.x = Math.PI / 2;
-        corda.position.set(cx * 0.7, 0, comprimento / 2);
+        corda.position.set(cx * meiaLarg, 0, comprimento / 2);
         grupo.add(corda);
     }
 
+    // Tábuas do chão da ponte
     for (var i = 0; i < numTabuas; i++) {
         var tabua = new THREE.Mesh(
-            new THREE.BoxGeometry(1.6, 0.12, espacamento * 0.85),
+            new THREE.BoxGeometry(largura, 0.12, espacamento * 0.85),
             materialTabua
         );
         tabua.position.set(0, -0.06, i * espacamento + espacamento / 2);
@@ -1562,8 +1497,73 @@ function criarPonte(x, y, z, comprimento, numTabuas) {
         grupo.add(tabua);
     }
 
+    // Postes e corrimãos laterais
+    var alturaPoste = 1.2;
+    var numPostes = numTabuas + 1;
+    var passoPoste = comprimento / numTabuas;
+    for (var lado = -1; lado <= 1; lado += 2) {
+        for (var pi = 0; pi < numPostes; pi++) {
+            var poste = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.06, 0.06, alturaPoste, 6),
+                materialCorda
+            );
+            poste.position.set(lado * meiaLarg, alturaPoste / 2, pi * passoPoste);
+            poste.castShadow = true;
+            grupo.add(poste);
+        }
+        // Corrimão horizontal no topo dos postes
+        var corrimao = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.05, 0.05, comprimento, 4),
+            materialCorda
+        );
+        corrimao.rotation.x = Math.PI / 2;
+        corrimao.position.set(lado * meiaLarg, alturaPoste, comprimento / 2);
+        grupo.add(corrimao);
+        // Corrimão intermédio (metade da altura)
+        var corrimaoMedio = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.04, 0.04, comprimento, 4),
+            materialCorda
+        );
+        corrimaoMedio.rotation.x = Math.PI / 2;
+        corrimaoMedio.position.set(lado * meiaLarg, alturaPoste * 0.5, comprimento / 2);
+        grupo.add(corrimaoMedio);
+    }
+
     grupo.position.set(x, y, z);
     elementosNivel.push({ grupo: grupo, tipo: 'ponte' });
+    cena.add(grupo);
+    return grupo;
+}
+
+// Tapete de velocidade (Speed Pad): placa plana dourada com setas
+function criarTapeteVelocidade(x, y, z) {
+    var grupo = new THREE.Group();
+    var matBase = new THREE.MeshStandardMaterial({ color: 0xffcc00, metalness: 0.6, roughness: 0.3, emissive: 0xffaa00, emissiveIntensity: 0.4 });
+    var matSeta = new THREE.MeshStandardMaterial({ color: 0xff4400, metalness: 0.3, roughness: 0.4, emissive: 0xff2200, emissiveIntensity: 0.5 });
+
+    // Placa base
+    var base = new THREE.Mesh(new THREE.BoxGeometry(6, 0.12, 2.5), matBase);
+    base.receiveShadow = true;
+    grupo.add(base);
+
+    // 3 setas a apontar em -Z (direção do nível)
+    for (var s = 0; s < 3; s++) {
+        var setaGrupo = new THREE.Group();
+        // Haste da seta
+        var haste = new THREE.Mesh(new THREE.BoxGeometry(0.25, 0.15, 0.8), matSeta);
+        haste.position.set(0, 0.14, 0.1);
+        setaGrupo.add(haste);
+        // Ponta triangular (cone achatado)
+        var ponta = new THREE.Mesh(new THREE.ConeGeometry(0.28, 0.5, 4), matSeta);
+        ponta.rotation.x = Math.PI / 2;
+        ponta.rotation.y = Math.PI / 4;
+        ponta.position.set(0, 0.14, -0.45);
+        setaGrupo.add(ponta);
+        setaGrupo.position.x = (s - 1) * 1.6;
+        grupo.add(setaGrupo);
+    }
+
+    grupo.position.set(x, y, z);
     cena.add(grupo);
     return grupo;
 }
@@ -1717,33 +1717,56 @@ function criarPicos(x, y, z, opcoes) {
 function criarElementosNivel() {
     var y = 0.35;
 
-    // Obstáculos na primeira plataforma: Mola ajustada antes da barreira de picos
-    criarMola(0, y, 24); // Mola vermelha imediatamente antes dos picos
-    criarPicos(0, y, 19, { largura: 12, numPicos: 18 }); // Barreira de picos ocupa toda a largura da plataforma
+    // ── Plataforma 1 (z=+40 a z=+15) ────────────────────────────
+    // Obstáculo 1: Picos com mola centrada
+    criarPicos(0, y, 32, { largura: 10, numPicos: 14 });
+    criarMola(0, y, 32);
+    // Tapete de velocidade antes do espaço da ponte
+    criarTapeteVelocidade(0, y, 17);
 
-    // Molas, Checkpoints, Ponte, Picos, Placa final
-    [[0,28],[3,10],[-3,-20],[0,-30]].forEach(function(p){ criarMola(p[0], y, p[1]); });
-    criarCheckpoint(-3, y, 14);
-    criarCheckpoint(3, y, -22);
-    criarPonte(-1, 0.4, 5, 6, 6);
-    criarPicos(2, y, 6, 4);
-    criarPicos(-2, y, -20, 4);
-    criarPlacaFinal(0, y, -35);
+    // ── Espaço 1 (z=+5 a z=+15): ponte de ligação Plat1→Plat2 ──
+    criarPonte(0, 0.35, 5, 10, 10, 10);
 
-    // Flores simétricas (±x): [absX, z, n]
+    // ── Plataforma 2 (z=+5 a z=-20) ─────────────────────────────
+    // Checkpoint 1: início da plataforma 2
+    criarCheckpoint(0, y, 4);
+    // Obstáculo 2: Picos — passar pelo lado ESQUERDO
+    criarPicos(3, y, -4, { largura: 6, numPicos: 8 });
+    // Obstáculo 3: Picos — passar pelo lado DIREITO
+    criarPicos(-3, y, -14, { largura: 6, numPicos: 8 });
+    // Checkpoint 2: fim da plataforma 2
+    criarCheckpoint(0, y, -19);
+
+    // ── Espaço 2 (z=-20 a z=-36): loop GLB ──────────────────────
+
+    // ── Plataforma 3 (z=-36 a z=-56) ────────────────────────────
+    // Obstáculo 4: Picos com mola centrada
+    criarPicos(0, y, -43, { largura: 10, numPicos: 14 });
+    criarMola(0, y, -43);
+
+    // ── Espaço 3 (z=-56 a z=-61): ponte de ligação Plat3→Plat4 ──
+    criarPonte(0, 0.35, -61, 5, 5, 10);
+
+    // ── Plataforma 4 (z=-61 a z=-86): paralela, mais comprida ────
+    // Placa final no extremo da plataforma 4
+    criarPlacaFinal(0, y, -84);
+
+    // Flores simétricas nas plataformas 1-3
     var floresSim = [
-        [4,36,5],[3,32,5],[4,26,5],[4,20,5],[4,14,4],
-        [4,8,4],[4,4,3],[4,-18,5],[4,-24,5],[4,-30,4],
-        [12,18,4],[12,10,4],[12,-20,4]
+        [4,39,5],[4,33,4],[4,26,5],[4,20,4],[4,17,3],
+        [4,3,4],[4,-4,3],[4,-16,4],
+        [4,-38,4],[4,-48,4],[4,-54,3]
     ];
     for (var i = 0; i < floresSim.length; i++) {
         var f = floresSim[i];
         criarFloresChao(-f[0], y, f[1], f[2]);
         criarFloresChao(f[0], y, f[1], f[2]);
     }
-    // Flores centrais
-    criarFloresChao(0, y, 34, 4);
-    criarFloresChao(0, y, -34, 4);
+    // Flores na plataforma 4
+    criarFloresChao(-4, y, -66, 4);
+    criarFloresChao(4, y, -66, 4);
+    criarFloresChao(-4, y, -76, 3);
+    criarFloresChao(4, y, -76, 3);
 }
 
 // --- Sem. 0/1: Atualização responsiva das dimensões ---
@@ -1838,7 +1861,7 @@ function loop() {
 
         if (movX !== 0 || movZ !== 0) {
             var nx = Math.max(-5, Math.min(5, sonicPlaceholder.position.x + movX));
-            var nz = Math.max(-36, Math.min(36, sonicPlaceholder.position.z + movZ));
+            var nz = Math.max(-86, Math.min(40, sonicPlaceholder.position.z + movZ));
 
             sonicPlaceholder.position.x = nx;
             sonicPlaceholder.position.z = nz;
@@ -1953,25 +1976,7 @@ function loop() {
         // Passo 1: computeVertexNormals() removido — era o maior bottleneck CPU (14.641 vértices/frame)
     }
 
-    // Animação das ondas de praia (avanço/recuo cíclico)
-    for (var ew = 0; ew < espumaOndas.length; ew++) {
-        var onda = espumaOndas[ew];
-        var dados = onda.userData;
-        var ciclo = Math.sin(tempo * 0.5 + dados.fase);
-        var avanco = ciclo * 3.0;
-        var novaDist = dados.ladoPraia.limAreia + dados.ladoPraia.sinal * (dados.distBase + avanco);
-
-        if (dados.ladoPraia.eixo === 'x') {
-            onda.position.x = novaDist;
-        } else {
-            onda.position.z = novaDist;
-        }
-
-        onda.position.y = -2.65 + Math.max(0, ciclo) * 0.15;
-
-        var opacidade = 0.3 + Math.max(0, -ciclo) * 0.5;
-        onda.material.opacity = opacidade;
-    }
+    // Ondas de praia removidas
 
     if (modoCamara === 'perspetiva') {
         var alvoSeguir = (modoBola && sonicBola) ? sonicBola : sonicPlaceholder;
