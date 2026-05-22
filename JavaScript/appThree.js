@@ -436,7 +436,7 @@ function criarTerreno() {
     // === Layout do Nível 1 ===
     // Progressão: Z+ (spawn) → Z- (fim), com 3 plataformas separadas por 2 espaços.
     // Espaço 1 (z+15 → z+5): ponte (a colocar)
-    // Espaço 2 (z-20 → z-30): loop (a colocar)
+    // Espaço 2 (z=-20 → z=-36): loop GLB (+6 unidades para o modelo caber)
     // No fim da Plat 3, rampa vira à direita para a Plat 4 onde está a placa final.
 
     // --- Plataforma 1: Spawn → primeiro espaço ---
@@ -445,13 +445,11 @@ function criarTerreno() {
     // --- Plataforma 2: segundo segmento ---
     criarSegmentoTerreno(0, -7.5, 12, 25, 4, 0);   // z=+5  a z=-20
 
-    // --- Plataforma 3: terceiro segmento ---
-    criarSegmentoTerreno(0, -40, 12, 20, 4, 0);    // z=-30 a z=-50
+    // --- Plataforma 3: terceiro segmento (recuou 6 u por causa do loop) ---
+    criarSegmentoTerreno(0, -46, 12, 20, 4, 0);    // z=-36 a z=-56
 
-    // --- Plataforma 4: paralela às outras, mais comprida, continuação do nível ---
-    // Espaço loop: z=-20 a z=-30 (vazio — o loop será colocado aqui)
-    // Plat 4 continua após o loop em z=-55, mesma largura, mais comprida
-    criarSegmentoTerreno(0, -67.5, 12, 25, 4, 0);  // z=-55 a z=-80
+    // --- Plataforma 4: continuação do nível ---
+    criarSegmentoTerreno(0, -73.5, 12, 25, 4, 0);  // z=-61 a z=-86
 
     // === PRAIA: Areia com perfil elíptico + degradê de cor (areia→mar) ===
     var segsX = 48, segsZ = 72;
@@ -768,55 +766,23 @@ function criarBarco() {
     for (var b = 0; b < configs.length; b++) {
         var cfg = configs[b];
         var barco = new THREE.Group();
-
-        // Casco
-        var casco = new THREE.Mesh(
-            new THREE.BoxGeometry(4, 1.2, 1.6),
-            new THREE.MeshBasicMaterial({ color: 0x8b4a2b })
-        );
+        var casco = new THREE.Mesh(new THREE.BoxGeometry(4, 1.2, 1.6), new THREE.MeshBasicMaterial({ color: 0x8b4a2b }));
         barco.add(casco);
-
-        // Convés
-        var conves = new THREE.Mesh(
-            new THREE.BoxGeometry(3.5, 0.2, 1.4),
-            new THREE.MeshBasicMaterial({ color: 0xd4a574 })
-        );
+        var conves = new THREE.Mesh(new THREE.BoxGeometry(3.5, 0.2, 1.4), new THREE.MeshBasicMaterial({ color: 0xd4a574 }));
         conves.position.y = 0.7;
         barco.add(conves);
-
-        // Mastro
-        var mastro = new THREE.Mesh(
-            new THREE.CylinderGeometry(0.08, 0.08, 4, 6),
-            new THREE.MeshBasicMaterial({ color: 0x4a2a14 })
-        );
+        var mastro = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.08, 4, 6), new THREE.MeshBasicMaterial({ color: 0x4a2a14 }));
         mastro.position.set(0, 2.7, 0);
         barco.add(mastro);
-
-        // Vela (plano com side DoubleSide)
-        var vela = new THREE.Mesh(
-            new THREE.PlaneGeometry(2.2, 3.0),
-            new THREE.MeshBasicMaterial({ color: cfg.corVela, side: THREE.DoubleSide })
-        );
+        var vela = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 3.0), new THREE.MeshBasicMaterial({ color: cfg.corVela, side: THREE.DoubleSide }));
         vela.position.set(0.05, 3.0, 0);
         vela.rotation.y = Math.PI / 2;
         barco.add(vela);
-
-        // Bandeira no topo do mastro
-        var bandeira = new THREE.Mesh(
-            new THREE.PlaneGeometry(0.6, 0.35),
-            new THREE.MeshBasicMaterial({ color: 0xcc1111, side: THREE.DoubleSide })
-        );
+        var bandeira = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.35), new THREE.MeshBasicMaterial({ color: 0xcc1111, side: THREE.DoubleSide }));
         bandeira.position.set(0.35, 4.7, 0);
         bandeira.rotation.y = Math.PI / 2;
         barco.add(bandeira);
-
-        barco.userData = {
-            cx: cfg.cx,
-            cz: cfg.cz,
-            raio: cfg.raio,
-            vel: cfg.vel,
-            fase: cfg.fase
-        };
+        barco.userData = { cx: cfg.cx, cz: cfg.cz, raio: cfg.raio, vel: cfg.vel, fase: cfg.fase };
         barcos.push(barco);
         cena.add(barco);
     }
@@ -870,9 +836,34 @@ function criarLuzes() {
     cena.add(luzDirecional);
 }
 
-// --- Sem. 2: Looping — placeholder (a implementar futuramente) ---
+// --- Sem. 2: Looping — modelo GLB do Blender ---
 function criarLooping() {
-    // Reservado para o looping completo
+    carregadorGLTF.load('assets/loop.glb', function(gltf) {
+        var loop = gltf.scene;
+
+        // Escala automática: altura do loop ≈ 12 unidades
+        var box = new THREE.Box3().setFromObject(loop);
+        var size = new THREE.Vector3();
+        box.getSize(size);
+        var escala = 16 / Math.max(size.x, size.y, size.z);
+        loop.scale.setScalar(escala);
+
+        // Re-calcular bbox após escala — centrar em X, fundo a y=0
+        box.setFromObject(loop);
+        var centroX = (box.min.x + box.max.x) / 2;
+        loop.position.set(-centroX, -box.min.y - 2.3, -28.75);
+
+        loop.traverse(function(node) {
+            if (node.isMesh) {
+                node.castShadow    = true;
+                node.receiveShadow = true;
+            }
+        });
+
+        cena.add(loop);
+    }, undefined, function(err) {
+        console.error('[loop.glb] erro ao carregar:', err);
+    });
 }
 
 // --- Sem. 2 + Sem. 3: Vegetação Procedural (ramificação recursiva, folhas cross-plane, 3 presets) ---
@@ -1275,9 +1266,9 @@ function criarVegetacao() {
         // Plat2
         [3,0.9],[-5,1.0],[-15,1.0],
         // Plat3
-        [-33,1.05],[-42,1.0],[-48,0.9],
+        [-39,1.05],[-48,1.0],[-54,0.9],
         // Plat4
-        [-58,1.0],[-66,1.1],[-72,0.9],[-77,1.0]
+        [-64,1.0],[-72,1.1],[-78,0.9],[-83,1.0]
     ];
     for (var i = 0; i < palmZ.length; i++) {
         criarPalmeira(-5, palmZ[i][0], palmZ[i][1]);
@@ -1290,9 +1281,9 @@ function criarVegetacao() {
         // Plat2
         [1,0.9],[-8,1.0],[-17,1.0],
         // Plat3
-        [-36,0.8],[-44,1.0],
+        [-42,0.8],[-50,1.0],
         // Plat4
-        [-61,0.9],[-69,1.0],[-75,0.8]
+        [-67,0.9],[-75,1.0],[-81,0.8]
     ];
     for (var k = 0; k < arbZ.length; k++) {
         criarArbusto(-4, arbZ[k][0], arbZ[k][1]);
@@ -1310,8 +1301,8 @@ function criarAneis() {
         [0,1.5,28],[0,1.5,24],[0,1.5,20],[0,1.5,16],[0,1.5,12],
         [0,1.5,6],[0,2.0,4],[0,2.5,2],[0,2.0,0],[0,1.5,-2],
         [0,8,-8],[0,13,-8],
-        [0,1.5,-18],[0,1.5,-22],[0,1.5,-26],
-        [-2,1.5,-34],[0,1.8,-34],[2,1.5,-34]
+        [0,1.5,-18],[0,1.5,-24],[0,1.5,-32],
+        [-2,1.5,-40],[0,1.8,-40],[2,1.5,-40]
     ];
 
     var materialBrilho  = new THREE.MeshBasicMaterial({ color: 0xffee88 });
@@ -1581,32 +1572,68 @@ function criarCheckpoint(x, y, z) {
     return grupo;
 }
 
-// Ponte: série de BoxGeometry (tábuas) com CylinderGeometry (cordas)
-function criarPonte(x, y, z, comprimento, numTabuas) {
+// Ponte: série de BoxGeometry (tábuas) com CylinderGeometry (cordas + corrimãos)
+function criarPonte(x, y, z, comprimento, numTabuas, largura) {
     var grupo = new THREE.Group();
     numTabuas = numTabuas || 8;
+    largura = largura || 10;
 
     var materialTabua = new THREE.MeshStandardMaterial({ color: 0x8B6B3D, roughness: 0.8 });
     var materialCorda = new THREE.MeshStandardMaterial({ color: 0x5A4020, roughness: 0.9 });
 
     var espacamento = comprimento / numTabuas;
+    var meiaLarg = largura / 2;
 
+    // Cordas principais nas laterais (ao nível das tábuas)
     for (var cx = -1; cx <= 1; cx += 2) {
-        var corda = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, comprimento, 4), materialCorda);
+        var corda = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, comprimento, 4), materialCorda);
         corda.rotation.x = Math.PI / 2;
-        corda.position.set(cx * 0.7, 0, comprimento / 2);
+        corda.position.set(cx * meiaLarg, 0, comprimento / 2);
         grupo.add(corda);
     }
 
+    // Tábuas do chão da ponte
     for (var i = 0; i < numTabuas; i++) {
         var tabua = new THREE.Mesh(
-            new THREE.BoxGeometry(1.6, 0.12, espacamento * 0.85),
+            new THREE.BoxGeometry(largura, 0.12, espacamento * 0.85),
             materialTabua
         );
         tabua.position.set(0, -0.06, i * espacamento + espacamento / 2);
         tabua.receiveShadow = true;
         tabua.castShadow = true;
         grupo.add(tabua);
+    }
+
+    // Postes e corrimãos laterais
+    var alturaPoste = 1.2;
+    var numPostes = numTabuas + 1;
+    var passoPoste = comprimento / numTabuas;
+    for (var lado = -1; lado <= 1; lado += 2) {
+        for (var pi = 0; pi < numPostes; pi++) {
+            var poste = new THREE.Mesh(
+                new THREE.CylinderGeometry(0.06, 0.06, alturaPoste, 6),
+                materialCorda
+            );
+            poste.position.set(lado * meiaLarg, alturaPoste / 2, pi * passoPoste);
+            poste.castShadow = true;
+            grupo.add(poste);
+        }
+        // Corrimão horizontal no topo dos postes
+        var corrimao = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.05, 0.05, comprimento, 4),
+            materialCorda
+        );
+        corrimao.rotation.x = Math.PI / 2;
+        corrimao.position.set(lado * meiaLarg, alturaPoste, comprimento / 2);
+        grupo.add(corrimao);
+        // Corrimão intermédio (metade da altura)
+        var corrimaoMedio = new THREE.Mesh(
+            new THREE.CylinderGeometry(0.04, 0.04, comprimento, 4),
+            materialCorda
+        );
+        corrimaoMedio.rotation.x = Math.PI / 2;
+        corrimaoMedio.position.set(lado * meiaLarg, alturaPoste * 0.5, comprimento / 2);
+        grupo.add(corrimaoMedio);
     }
 
     grupo.position.set(x, y, z);
@@ -1859,7 +1886,8 @@ function criarElementosNivel() {
     // Tapete de velocidade antes do espaço da ponte
     criarTapeteVelocidade(0, y, 17);
 
-    // ── Espaço 1 (z=+15 a z=+5): ponte (a colocar futuramente) ──
+    // ── Espaço 1 (z=+5 a z=+15): ponte de ligação Plat1→Plat2 ──
+    criarPonte(0, 0.35, 5, 10, 10, 10);
 
     // ── Plataforma 2 (z=+5 a z=-20) ─────────────────────────────
     // Checkpoint 1: início da plataforma 2
@@ -1871,22 +1899,25 @@ function criarElementosNivel() {
     // Checkpoint 2: fim da plataforma 2
     criarCheckpoint(0, y, -19);
 
-    // ── Espaço 2 (z=-20 a z=-30): loop (a colocar futuramente) ──
+    // ── Espaço 2 (z=-20 a z=-36): loop GLB ──────────────────────
 
-    // ── Plataforma 3 (z=-30 a z=-50) ────────────────────────────
+    // ── Plataforma 3 (z=-36 a z=-56) ────────────────────────────
     // Obstáculo 4: Picos com mola centrada
-    criarPicos(0, y, -37, { largura: 10, numPicos: 14 });
-    criarMola(0, y, -37);
+    criarPicos(0, y, -43, { largura: 10, numPicos: 14 });
+    criarMola(0, y, -43);
 
-    // ── Plataforma 4 (z=-55 a z=-80): paralela, mais comprida ────
+    // ── Espaço 3 (z=-56 a z=-61): ponte de ligação Plat3→Plat4 ──
+    criarPonte(0, 0.35, -61, 5, 5, 10);
+
+    // ── Plataforma 4 (z=-61 a z=-86): paralela, mais comprida ────
     // Placa final no extremo da plataforma 4
-    criarPlacaFinal(0, y, -78);
+    criarPlacaFinal(0, y, -84);
 
     // Flores simétricas nas plataformas 1-3
     var floresSim = [
         [4,39,5],[4,33,4],[4,26,5],[4,20,4],[4,17,3],
         [4,3,4],[4,-4,3],[4,-16,4],
-        [4,-32,4],[4,-42,4],[4,-48,3]
+        [4,-38,4],[4,-48,4],[4,-54,3]
     ];
     for (var i = 0; i < floresSim.length; i++) {
         var f = floresSim[i];
@@ -1894,10 +1925,10 @@ function criarElementosNivel() {
         criarFloresChao(f[0], y, f[1], f[2]);
     }
     // Flores na plataforma 4
-    criarFloresChao(-4, y, -60, 4);
-    criarFloresChao(4, y, -60, 4);
-    criarFloresChao(-4, y, -70, 3);
-    criarFloresChao(4, y, -70, 3);
+    criarFloresChao(-4, y, -66, 4);
+    criarFloresChao(4, y, -66, 4);
+    criarFloresChao(-4, y, -76, 3);
+    criarFloresChao(4, y, -76, 3);
 }
 
 // --- Sem. 0/1: Atualização responsiva das dimensões ---
@@ -1988,7 +2019,7 @@ function loop() {
 
         if (movX !== 0 || movZ !== 0) {
             var nx = Math.max(-5, Math.min(5, sonicPlaceholder.position.x + movX));
-            var nz = Math.max(-80, Math.min(40, sonicPlaceholder.position.z + movZ));
+            var nz = Math.max(-86, Math.min(40, sonicPlaceholder.position.z + movZ));
 
             sonicPlaceholder.position.x = nx;
             sonicPlaceholder.position.z = nz;
