@@ -23,6 +23,7 @@ var chao, sol, nuvens = [];
 var aneisDecorativos = [], vegetacao = [], palmeiras = [];
 var sonicPlaceholder, sonicBola, modoBola = false, oceano, espumaOndas = [];
 var ceu, ilhasDistantes = [], barcos = [], gaivotas = [];
+var tufosRelva = [];
 // Passo 3: cache de materials partilhados para folhas de árvores
 var materiaisFolhas = {};
 
@@ -35,6 +36,7 @@ renderer.setClearColor(0x6ec6ff, 1.0);
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+window.addEventListener('resize', function() { _needsResize = true; });
 
 document.body.style.margin = '0';
 document.body.style.overflow = 'hidden';
@@ -77,6 +79,19 @@ var camLivreUltimoMouse = { x: 0, y: 0 };
 
 // --- Estado da câmara ---
 var vistaAtual = 'Vista geral (3/4)';
+
+// Vector3 pré-alocados — evitam criação de objetos GC no render loop
+var _vCamForward      = new THREE.Vector3();
+var _vCamRight        = new THREE.Vector3();
+var _vCamDeslocamento = new THREE.Vector3();
+var _vCamLookAt       = new THREE.Vector3();
+var _vAlvoSeguir      = new THREE.Vector3();
+// Recursos partilhados lazy-init (flores, relva)
+var _matCauleFlor = null, _matCentroFlor = null, _matsPetalaFlor = null;
+var _geoCauleFlor = null, _geoCentroFlor = null, _geoPetalaFlor = null;
+var _matsRelvaTufos = null, _geosRelvaTufo = null;
+// Flag de resize — evita chamar renderer.setSize() em cada frame
+var _needsResize = false;
 
 var labelVista = document.createElement('div');
 labelVista.style.cssText = 'position:fixed;top:10px;left:10px;background:rgba(0,0,0,0.7);color:#fff;padding:8px 16px;font-family:monospace;font-size:14px;border-radius:6px;z-index:100;pointer-events:none;';
@@ -285,22 +300,57 @@ function criarTexturaXadrez() {
 // --- Sem. 3: Textura procedural da relva (CanvasTexture) ---
 function criarTexturaRelva() {
     var canvas = document.createElement('canvas');
-    canvas.width = 256; canvas.height = 256;
+    canvas.width = 512; canvas.height = 512;
     var ctx = canvas.getContext('2d');
-    // Base verde
-    ctx.fillStyle = '#39b54a';
-    ctx.fillRect(0, 0, 256, 256);
-    // Variação de tons
-    var tons = ['#2d8f2d', '#4ab34a', '#228B22', '#32a843'];
-    for (var i = 0; i < 800; i++) {
+
+    // Gradiente base: mais escuro em baixo (solo), mais claro em cima (luz)
+    var grad = ctx.createLinearGradient(0, 512, 0, 0);
+    grad.addColorStop(0, '#1a6020');
+    grad.addColorStop(0.45, '#2d8f2d');
+    grad.addColorStop(1,  '#4ab34a');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 512, 512);
+
+    // Manchas de variação de tons (solo húmido, zonas de sombra, zonas iluminadas)
+    var tons = ['#196b19', '#228B22', '#2d9e2d', '#3dae3d', '#5bc05b', '#166016', '#4dbb4d', '#1f751f'];
+    for (var i = 0; i < 3500; i++) {
         ctx.fillStyle = tons[Math.floor(Math.random() * tons.length)];
-        var x = Math.random() * 256, y = Math.random() * 256;
-        ctx.fillRect(x, y, 2 + Math.random() * 4, 1 + Math.random() * 3);
+        var x = Math.random() * 512, y = Math.random() * 512;
+        ctx.globalAlpha = 0.2 + Math.random() * 0.45;
+        ctx.fillRect(x, y, 1 + Math.random() * 5, 1 + Math.random() * 3);
     }
+
+    // Lâminas de relva desenhadas com curvas bezier (aspeto orgânico)
+    var coresBrins = ['#1a7020', '#236b23', '#2d9a2d', '#155c15', '#3bab3b', '#0f5c0f'];
+    ctx.globalAlpha = 0.75;
+    for (var j = 0; j < 900; j++) {
+        var bx = Math.random() * 512;
+        var by = Math.random() * 512;
+        var bh = 9 + Math.random() * 18;
+        var bend = (Math.random() - 0.5) * 8;
+        ctx.strokeStyle = coresBrins[Math.floor(Math.random() * coresBrins.length)];
+        ctx.lineWidth = 0.7 + Math.random() * 1.2;
+        ctx.beginPath();
+        ctx.moveTo(bx, by);
+        ctx.quadraticCurveTo(bx + bend * 0.5, by - bh * 0.55, bx + bend, by - bh);
+        ctx.stroke();
+    }
+
+    // Reflexos solares nas pontas das lâminas (brilhos claros)
+    ctx.globalAlpha = 0.18;
+    for (var k = 0; k < 300; k++) {
+        var lx = Math.random() * 512, ly = Math.random() * 512;
+        ctx.fillStyle = '#b8f0b8';
+        ctx.beginPath();
+        ctx.arc(lx, ly, 0.4 + Math.random() * 2, 0, Math.PI * 2);
+        ctx.fill();
+    }
+
+    ctx.globalAlpha = 1.0;
     var tex = new THREE.CanvasTexture(canvas);
     tex.colorSpace = THREE.SRGBColorSpace;
     tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-    tex.repeat.set(4, 4);
+    tex.repeat.set(6, 6);
     return tex;
 }
 
@@ -517,6 +567,11 @@ function criarSkyboxRetro() {
     cena.add(sol);
 
     var materialNuvem = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    var geosNuvem = [
+        new THREE.SphereGeometry(1.20, 16, 8),
+        new THREE.SphereGeometry(1.45, 16, 8),
+        new THREE.SphereGeometry(1.70, 16, 8)
+    ];
 
     for (var n = 0; n < 14; n++) {
         var grupoNuvem = new THREE.Group();
@@ -526,8 +581,7 @@ function criarSkyboxRetro() {
         var posZ = -35 + (n * 5) % 70;
 
         for (var parte = 0; parte < 3; parte++) {
-            var geometriaNuvem = new THREE.SphereGeometry(1.2 + parte * 0.25, 16, 8);
-            var esferaNuvem = new THREE.Mesh(geometriaNuvem, materialNuvem);
+            var esferaNuvem = new THREE.Mesh(geosNuvem[parte], materialNuvem);
             esferaNuvem.position.set(parte * 1.2, parte === 1 ? 0.45 : 0, 0);
             grupoNuvem.add(esferaNuvem);
         }
@@ -886,7 +940,7 @@ function gerarRamo(grupo, origem, orientacao, comprimento, raio, nivel, maxNivel
         var quaternion = new THREE.Quaternion();
         quaternion.setFromUnitVectors(eixo, diff.clone().normalize());
         cilindro.quaternion.copy(quaternion);
-        cilindro.castShadow = true;
+        if (params.castShadow !== false) cilindro.castShadow = true;
         grupo.add(cilindro);
 
         posAtual = proxPos;
@@ -1113,7 +1167,8 @@ function criarArbusto(posX, posZ, escala) {
         anguloFilhoMax: 1.2,
         folhasPorRamo: 6,
         tamanhoFolha: 0.8,
-        coresFolha: [0x2d8f2d, 0x39b54a, 0x228B22, 0x4ab34a]
+        coresFolha: [0x2d8f2d, 0x39b54a, 0x228B22, 0x4ab34a],
+        castShadow: false
     };
 
     var numCaules = 3 + Math.floor(rng.next() * 3);
@@ -1153,6 +1208,56 @@ function criarArbusto(posX, posZ, escala) {
             var rf = 0.3 + rng.range(0, 0.6);
             flor.position.set(Math.cos(af) * rf, 0.5 + rng.range(0, 0.8), Math.sin(af) * rf);
             grupo.add(flor);
+        }
+    }
+
+    // Hull esférico translúcido: dá volume e aparência densa ao arbusto
+    var tamHull = 0.55 + rng.range(0, 0.55);
+    var matHull = new THREE.MeshStandardMaterial({
+        color: 0x267326, roughness: 0.9, transparent: true, opacity: 0.32
+    });
+    var hull = new THREE.Mesh(new THREE.SphereGeometry(tamHull, 9, 7), matHull);
+    hull.position.y = 0.45 + tamHull * 0.45;
+    hull.scale.set(1.05, 0.80, 1.05);
+    grupo.add(hull);
+
+    // Clusters de bagas (amoras / framboesas / cerejas) — 80% dos arbustos
+    if (rng.next() > 0.20) {
+        var tiposBaga = [
+            { cor: 0x3a0f5e, brilho: 0x6b2a9e },   // amora (roxo escuro)
+            { cor: 0xbb1133, brilho: 0xff3355 },     // framboesa (vermelho vivo)
+            { cor: 0x7a0000, brilho: 0xcc2222 }      // cereja (vermelho escuro)
+        ];
+        var tipoBaga = tiposBaga[Math.floor(rng.next() * tiposBaga.length)];
+        var matBaga   = new THREE.MeshStandardMaterial({ color: tipoBaga.cor,   roughness: 0.3, metalness: 0.15 });
+        var matBrilho = new THREE.MeshBasicMaterial({ color: tipoBaga.brilho });
+
+        var numClusters = 3 + Math.floor(rng.next() * 5);
+        for (var cl = 0; cl < numClusters; cl++) {
+            var angCl  = rng.next() * Math.PI * 2;
+            var distCl = tamHull * rng.range(0.30, 0.90);
+            var hCl    = 0.25 + rng.range(0, tamHull * 0.90);
+
+            var numBagas = 3 + Math.floor(rng.next() * 5);
+            for (var bg = 0; bg < numBagas; bg++) {
+                var baga = new THREE.Mesh(
+                    new THREE.SphereGeometry(0.033 + rng.range(0, 0.022), 6, 5),
+                    matBaga
+                );
+                baga.position.set(
+                    Math.cos(angCl) * distCl + rng.range(-0.11, 0.11),
+                    hCl + rng.range(-0.07, 0.07),
+                    Math.sin(angCl) * distCl + rng.range(-0.11, 0.11)
+                );
+                grupo.add(baga);
+
+                // Ponto de brilho no topo de cada baga (reflexo de luz)
+                var pont = new THREE.Mesh(new THREE.SphereGeometry(0.011, 4, 3), matBrilho);
+                pont.position.copy(baga.position);
+                pont.position.y += 0.026;
+                pont.position.z -= 0.013;
+                grupo.add(pont);
+            }
         }
     }
 
@@ -1209,13 +1314,15 @@ function criarAneis() {
         [-2,1.5,-34],[0,1.8,-34],[2,1.5,-34]
     ];
 
-    var materialBrilho = new THREE.MeshBasicMaterial({ color: 0xffee88 });
+    var materialBrilho  = new THREE.MeshBasicMaterial({ color: 0xffee88 });
+    var geoAnelExterno  = new THREE.TorusGeometry(0.55, 0.13, 16, 48);
+    var geoAnelBrilho   = new THREE.TorusGeometry(0.35, 0.04, 8, 32);
     for (var i = 0; i < pos.length; i++) {
         var grupoAnel = new THREE.Group();
-        var anel = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.13, 16, 48), materialDourado);
-        // Passo 2: castShadow removido — anéis pequenos, sombra impercetível
+        var anel = new THREE.Mesh(geoAnelExterno, materialDourado);
+        // castShadow removido — anéis pequenos, sombra impercetível
         grupoAnel.add(anel);
-        grupoAnel.add(new THREE.Mesh(new THREE.TorusGeometry(0.35, 0.04, 8, 32), materialBrilho));
+        grupoAnel.add(new THREE.Mesh(geoAnelBrilho, materialBrilho));
         grupoAnel.position.set(pos[i][0], pos[i][1], pos[i][2]);
         grupoAnel.rotation.y = Math.PI / 2;
         aneisDecorativos.push(grupoAnel);
@@ -1543,35 +1650,35 @@ function criarTapeteVelocidade(x, y, z) {
 
 // Flores decorativas no chão
 function criarFloresChao(x, y, z, numFlores) {
-    var grupo = new THREE.Group();
-    numFlores = numFlores || 5;
+    // Lazy-init: materiais e geometrias criados uma vez, partilhados por todas as flores
+    if (!_matCauleFlor) {
+        _matCauleFlor  = new THREE.MeshStandardMaterial({ color: 0x228B22, roughness: 0.7 });
+        _matCentroFlor = new THREE.MeshBasicMaterial({ color: 0xffee00 });
+        _matsPetalaFlor = [0xff69b4, 0xffdd44, 0xff4444, 0xffffff, 0xff88cc].map(function(c) {
+            return new THREE.MeshBasicMaterial({ color: c });
+        });
+        _geoCauleFlor  = new THREE.CylinderGeometry(0.02, 0.03, 0.4, 4);
+        _geoCentroFlor = new THREE.SphereGeometry(0.06, 6, 4);
+        _geoPetalaFlor = new THREE.SphereGeometry(0.05, 6, 4);
+    }
 
-    var coresPetalas = [0xff69b4, 0xffdd44, 0xff4444, 0xffffff, 0xff88cc];
-    var materialCaule = new THREE.MeshStandardMaterial({ color: 0x228B22, roughness: 0.7 });
+    numFlores = numFlores || 5;
+    var grupo = new THREE.Group();
 
     for (var f = 0; f < numFlores; f++) {
         var grupoFlor = new THREE.Group();
 
-        var caule = new THREE.Mesh(
-            new THREE.CylinderGeometry(0.02, 0.03, 0.4, 4),
-            materialCaule
-        );
+        var caule = new THREE.Mesh(_geoCauleFlor, _matCauleFlor);
         caule.position.y = 0.2;
         grupoFlor.add(caule);
 
-        var corFlor = coresPetalas[f % coresPetalas.length];
-        var materialPetala = new THREE.MeshBasicMaterial({ color: corFlor });
-        var materialCentro = new THREE.MeshBasicMaterial({ color: 0xffee00 });
-
-        var centro = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 4), materialCentro);
+        var matPetala = _matsPetalaFlor[f % _matsPetalaFlor.length];
+        var centro = new THREE.Mesh(_geoCentroFlor, _matCentroFlor);
         centro.position.y = 0.42;
         grupoFlor.add(centro);
 
         for (var p = 0; p < 5; p++) {
-            var petala = new THREE.Mesh(
-                new THREE.SphereGeometry(0.05, 6, 4),
-                materialPetala
-            );
+            var petala = new THREE.Mesh(_geoPetalaFlor, matPetala);
             var anguloPetala = (p / 5) * Math.PI * 2;
             petala.position.set(
                 Math.cos(anguloPetala) * 0.08,
@@ -1594,6 +1701,61 @@ function criarFloresChao(x, y, z, numFlores) {
     grupo.position.set(x, y, z);
     cena.add(grupo);
     return grupo;
+}
+
+// --- Tufos de relva 3D (cross-plane cards) espalhados nas plataformas ---
+function criarTufoRelva(x, z) {
+    // Lazy-init: 7 materiais e 3 geometrias partilhados por todos os ~1600 tufos
+    if (!_matsRelvaTufos) {
+        _matsRelvaTufos = [0x1a5e1a, 0x1e6b1e, 0x245e24, 0x1c6020, 0x206820, 0x175318, 0x2a6a2a].map(function(cor) {
+            return new THREE.MeshBasicMaterial({ color: cor, side: THREE.DoubleSide });
+        });
+        _geosRelvaTufo = [0.15, 0.22, 0.33].map(function(h) {
+            var g = new THREE.PlaneGeometry(0.10, h);
+            var p = g.attributes.position;
+            for (var v = 0; v < p.count; v++) p.setY(v, p.getY(v) + h / 2);
+            p.needsUpdate = true;
+            return g;
+        });
+    }
+
+    var mat = _matsRelvaTufos[Math.floor(Math.random() * _matsRelvaTufos.length)];
+    var geo = _geosRelvaTufo[Math.floor(Math.random() * _geosRelvaTufo.length)];
+
+    var grupo = new THREE.Group();
+    for (var tc = 0; tc < 2; tc++) {
+        var plano = new THREE.Mesh(geo, mat);
+        plano.rotation.y = tc * Math.PI / 2;
+        grupo.add(plano);
+    }
+
+    grupo.position.set(x, 0.375, z);
+    grupo.rotation.y = Math.random() * Math.PI;
+    grupo.userData.faseBrisa = Math.random() * Math.PI * 2;
+
+    tufosRelva.push(grupo);
+    cena.add(grupo);
+    return grupo;
+}
+
+function criarTufosRelvaNasPlataformas() {
+    // Dimensões ligeiramente menores que as plataformas para não ficar nas bordas
+    var plats = [
+        { cx: 0, cz:  27.5, lx: 10, lz: 22 },
+        { cx: 0, cz:  -7.5, lx: 10, lz: 22 },
+        { cx: 0, cz: -40.0, lx: 10, lz: 17 },
+        { cx: 0, cz: -67.5, lx: 10, lz: 22 }
+    ];
+    var densidade = 2.0; // tufos/m²  (~1600 tufos total)
+    plats.forEach(function(p) {
+        var num = Math.floor(p.lx * p.lz * densidade);
+        for (var ti = 0; ti < num; ti++) {
+            var tx = p.cx + (Math.random() - 0.5) * p.lx;
+            var tz = p.cz + (Math.random() - 0.5) * p.lz;
+            criarTufoRelva(tx, tz);
+        }
+    });
+    console.log('[Relva] ' + tufosRelva.length + ' tufos criados');
 }
 
 // Placa final (Goal Post): poste + placa rotativa
@@ -1764,26 +1926,22 @@ function loop() {
     var delta = relogio.getDelta();
     var tempo = relogio.elapsedTime;
 
-    atualizarDimensoes();
+    if (_needsResize) { atualizarDimensoes(); _needsResize = false; }
 
     // --- Sem. 5: Atualizar câmara livre (WASD + Shift/Ctrl + arrastar rato) ---
     if (modoCamaraLivre) {
         var velCam = (teclasPremidas.shift && teclasPremidas.control ? 40 : 20) * delta;
         var cosP = Math.cos(camLivrePitch);
-        var forward = new THREE.Vector3(
-            -Math.sin(camLivreYaw) * cosP,
-             Math.sin(camLivrePitch),
-            -Math.cos(camLivreYaw) * cosP
-        );
-        var right = new THREE.Vector3(Math.cos(camLivreYaw), 0, -Math.sin(camLivreYaw));
-
-        var deslocamento = new THREE.Vector3();
-        if (teclasPremidas.w) deslocamento.addScaledVector(forward,  velCam);
-        if (teclasPremidas.s) deslocamento.addScaledVector(forward, -velCam);
-        if (teclasPremidas.a) deslocamento.addScaledVector(right,   -velCam);
-        if (teclasPremidas.d) deslocamento.addScaledVector(right,    velCam);
-        camaraPerspetiva.position.add(deslocamento);
-        camaraPerspetiva.lookAt(camaraPerspetiva.position.clone().add(forward));
+        _vCamForward.set(-Math.sin(camLivreYaw) * cosP, Math.sin(camLivrePitch), -Math.cos(camLivreYaw) * cosP);
+        _vCamRight.set(Math.cos(camLivreYaw), 0, -Math.sin(camLivreYaw));
+        _vCamDeslocamento.set(0, 0, 0);
+        if (teclasPremidas.w) _vCamDeslocamento.addScaledVector(_vCamForward,  velCam);
+        if (teclasPremidas.s) _vCamDeslocamento.addScaledVector(_vCamForward, -velCam);
+        if (teclasPremidas.a) _vCamDeslocamento.addScaledVector(_vCamRight,   -velCam);
+        if (teclasPremidas.d) _vCamDeslocamento.addScaledVector(_vCamRight,    velCam);
+        camaraPerspetiva.position.add(_vCamDeslocamento);
+        _vCamLookAt.copy(camaraPerspetiva.position).add(_vCamForward);
+        camaraPerspetiva.lookAt(_vCamLookAt);
     }
 
     // --- Animação dos membros do Sonic (pivot nos ombros e ancas) ---
@@ -1928,6 +2086,38 @@ function loop() {
         }
     }
 
+    // --- Animação tufos de relva: brisa suave + reação à passagem do Sonic ---
+    if (tufosRelva.length > 0) {
+        var posSonicTufo = sonicPlaceholder ? sonicPlaceholder.position : null;
+        var raioSonicRelva = 2.8;
+        for (var tr = 0; tr < tufosRelva.length; tr++) {
+            var tufo = tufosRelva[tr];
+            // Brisa base (oscilação suave, fase diferente por tufo)
+            var brisaX = Math.sin(tempo * 1.8 + tufo.userData.faseBrisa) * 0.07;
+            var brisaZ = Math.cos(tempo * 1.3 + tufo.userData.faseBrisa * 0.7) * 0.04;
+
+            // Reação à proximidade do Sonic: inclina para longe dele
+            if (posSonicTufo) {
+                var tdx = tufo.position.x - posSonicTufo.x;
+                var tdz = tufo.position.z - posSonicTufo.z;
+                var td2 = tdx * tdx + tdz * tdz;
+                if (td2 < raioSonicRelva * raioSonicRelva) {
+                    var tdist = Math.sqrt(td2) + 0.001;
+                    var forca = (1.0 - tdist / raioSonicRelva) * 0.55;
+                    brisaX += (tdx / tdist) * forca;
+                    brisaZ += (tdz / tdist) * forca;
+                } else {
+                    // Amortece de volta ao neutro quando Sonic se afasta
+                    tufo.rotation.x *= 0.88;
+                    tufo.rotation.z *= 0.88;
+                }
+            }
+
+            tufo.rotation.x = brisaX;
+            tufo.rotation.z = brisaZ;
+        }
+    }
+
     // Animação de ondas do oceano (ondulação direcional)
     if (oceano) {
         var posOceano = oceano.geometry.attributes.position;
@@ -1951,8 +2141,8 @@ function loop() {
         var alvoSeguir = (modoBola && sonicBola) ? sonicBola : sonicPlaceholder;
         if (modoSeguirSonic && alvoSeguir) {
             var sp = alvoSeguir.position;
-            var alvoPos = new THREE.Vector3(sp.x, sp.y + 6, sp.z + 14);
-            camaraPerspetiva.position.lerp(alvoPos, 0.08);
+            _vAlvoSeguir.set(sp.x, sp.y + 6, sp.z + 14);
+            camaraPerspetiva.position.lerp(_vAlvoSeguir, 0.08);
             camaraPerspetiva.lookAt(sp.x, sp.y + 1, sp.z);
         }
     }
@@ -1963,7 +2153,9 @@ function loop() {
 
 // --- Sem. 0/1 + Sem. 2: Inicialização ---
 function Start() {
+    atualizarDimensoes(); // ajusta câmara ao tamanho real da janela na inicialização
     criarTerreno();
+    criarTufosRelvaNasPlataformas();
     criarSkyboxRetro();
     criarIlhasDistantes();
     criarBarco();
