@@ -376,21 +376,14 @@ function criarTexturaAreia() {
     return tex;
 }
 
-// --- Sem. 0/1 + Sem. 3: Terreno linear (relva + terra xadrez, z=+35 a -35) ---
-var texturaXadrezPartilhada, materialTerraPartilhado, materialRelvaPartilhado, materialRelvaEscPartilhado;
+// --- Sem. 0/1 + Sem. 3: Terreno linear (terra xadrez) ---
+var texturaXadrezPartilhada, materialTerraPartilhado;
 
 function inicializarMateriaisTerreno() {
     texturaXadrezPartilhada = criarTexturaXadrez();
     materialTerraPartilhado = new THREE.MeshStandardMaterial({
         map: texturaXadrezPartilhada,
         roughness: 0.75
-    });
-    // Sem. 3: textura procedural da relva aplicada via map
-    materialRelvaPartilhado = new THREE.MeshStandardMaterial({
-        map: criarTexturaRelva(), color: 0x39b54a, roughness: 0.65
-    });
-    materialRelvaEscPartilhado = new THREE.MeshStandardMaterial({
-        color: 0x2a7d3a, roughness: 0.7
     });
 }
 
@@ -407,22 +400,7 @@ function criarSegmentoTerreno(x, z, largX, compZ, altura, elevacao, temRelva) {
     grupo.add(terra);
 
     if (temRelva !== false) {
-        var relva = new THREE.Mesh(
-            new THREE.BoxGeometry(largX + 0.3, 0.35, compZ + 0.3),
-            materialRelvaPartilhado
-        );
-        relva.position.y = 0.175;
-        relva.receiveShadow = true;
-        relva.castShadow = true;
-        grupo.add(relva);
-
-        var bordoRelva = new THREE.Mesh(
-            new THREE.BoxGeometry(largX + 0.6, 0.15, compZ + 0.6),
-            materialRelvaEscPartilhado
-        );
-        bordoRelva.position.y = 0.075;
-        bordoRelva.receiveShadow = true;
-        grupo.add(bordoRelva);
+        grupo.add(criarSuperficieRelvaUnificada(x, z, largX, compZ));
     }
 
     grupo.position.set(x, elevacao, z);
@@ -1730,59 +1708,60 @@ function criarFloresChao(x, y, z, numFlores) {
     return grupo;
 }
 
-// --- Tufos de relva 3D (cross-plane cards) espalhados nas plataformas ---
-function criarTufoRelva(x, z) {
-    // Lazy-init: 7 materiais e 3 geometrias partilhados por todos os ~1600 tufos
+// --- Superfície de relva unificada: base sólida + lâminas como filhos ---
+function criarSuperficieRelvaUnificada(terrainX, terrainZ, largX, compZ) {
+    // Lazy-init: materiais e geometrias partilhados por todas as superfícies
     if (!_matsRelvaTufos) {
         _matsRelvaTufos = [0x1a5e1a, 0x1e6b1e, 0x245e24, 0x1c6020, 0x206820, 0x175318, 0x2a6a2a].map(function(cor) {
             return new THREE.MeshBasicMaterial({ color: cor, side: THREE.DoubleSide });
         });
-        _geosRelvaTufo = [0.15, 0.22, 0.33].map(function(h) {
-            var g = new THREE.PlaneGeometry(0.10, h);
-            var p = g.attributes.position;
-            for (var v = 0; v < p.count; v++) p.setY(v, p.getY(v) + h / 2);
-            p.needsUpdate = true;
+        _geosRelvaTufo = [0.18, 0.26, 0.36].map(function(h) {
+            var g = new THREE.PlaneGeometry(0.12, h);
+            var pos = g.attributes.position;
+            for (var v = 0; v < pos.count; v++) pos.setY(v, pos.getY(v) + h / 2);
+            pos.needsUpdate = true;
             return g;
         });
     }
 
-    var mat = _matsRelvaTufos[Math.floor(Math.random() * _matsRelvaTufos.length)];
-    var geo = _geosRelvaTufo[Math.floor(Math.random() * _geosRelvaTufo.length)];
-
     var grupo = new THREE.Group();
-    for (var tc = 0; tc < 2; tc++) {
-        var plano = new THREE.Mesh(geo, mat);
-        plano.rotation.y = tc * Math.PI / 2;
-        grupo.add(plano);
+
+    // Camada base única (substitui relva + bordoRelva)
+    var matBase = new THREE.MeshStandardMaterial({ color: 0x2a7232, roughness: 0.9, metalness: 0.0 });
+    var geoBase = new THREE.BoxGeometry(largX + 0.5, 0.20, compZ + 0.5);
+    var base = new THREE.Mesh(geoBase, matBase);
+    base.position.y = 0.10;
+    base.receiveShadow = true;
+    grupo.add(base);
+
+    // Lâminas densas como filhos do grupo (coordenadas locais ao segmento)
+    var num = Math.floor(largX * compZ * 3.0);
+    for (var i = 0; i < num; i++) {
+        var lx = (Math.random() - 0.5) * largX;
+        var lz = (Math.random() - 0.5) * compZ;
+
+        var tufo = new THREE.Group();
+        var nPlanos = Math.random() < 0.5 ? 2 : 3;
+        var mat = _matsRelvaTufos[Math.floor(Math.random() * _matsRelvaTufos.length)];
+        var geo = _geosRelvaTufo[Math.floor(Math.random() * _geosRelvaTufo.length)];
+        for (var p = 0; p < nPlanos; p++) {
+            var plano = new THREE.Mesh(geo, mat);
+            plano.rotation.y = (p * Math.PI) / nPlanos;
+            tufo.add(plano);
+        }
+
+        tufo.position.set(lx, 0.20, lz);
+        tufo.rotation.y = Math.random() * Math.PI;
+        tufo.userData.faseBrisa = Math.random() * Math.PI * 2;
+        tufo.userData.worldX = terrainX + lx;
+        tufo.userData.worldZ = terrainZ + lz;
+
+        grupo.add(tufo);
+        tufosRelva.push(tufo);
     }
 
-    grupo.position.set(x, 0.375, z);
-    grupo.rotation.y = Math.random() * Math.PI;
-    grupo.userData.faseBrisa = Math.random() * Math.PI * 2;
-
-    tufosRelva.push(grupo);
-    cena.add(grupo);
+    console.log('[Relva] segmento (' + terrainX + ',' + terrainZ + ') — ' + num + ' lâminas, total ' + tufosRelva.length);
     return grupo;
-}
-
-function criarTufosRelvaNasPlataformas() {
-    // Dimensões ligeiramente menores que as plataformas para não ficar nas bordas
-    var plats = [
-        { cx: 0, cz:  27.5, lx: 10, lz: 22 },
-        { cx: 0, cz:  -7.5, lx: 10, lz: 22 },
-        { cx: 0, cz: -40.0, lx: 10, lz: 17 },
-        { cx: 0, cz: -67.5, lx: 10, lz: 22 }
-    ];
-    var densidade = 2.0; // tufos/m²  (~1600 tufos total)
-    plats.forEach(function(p) {
-        var num = Math.floor(p.lx * p.lz * densidade);
-        for (var ti = 0; ti < num; ti++) {
-            var tx = p.cx + (Math.random() - 0.5) * p.lx;
-            var tz = p.cz + (Math.random() - 0.5) * p.lz;
-            criarTufoRelva(tx, tz);
-        }
-    });
-    console.log('[Relva] ' + tufosRelva.length + ' tufos criados');
 }
 
 // Placa final (Goal Post): poste + placa rotativa
@@ -2121,27 +2100,30 @@ function loop() {
     if (tufosRelva.length > 0) {
         var posSonicTufo = sonicPlaceholder ? sonicPlaceholder.position : null;
         var raioSonicRelva = 2.8;
+        var sonicWX = posSonicTufo ? posSonicTufo.x : 0;
+        var sonicWZ = posSonicTufo ? posSonicTufo.z : 0;
+        var CULL_R2 = 35 * 35; // ignora tufos a mais de 35u do Sonic
         for (var tr = 0; tr < tufosRelva.length; tr++) {
             var tufo = tufosRelva[tr];
+            var tdx = tufo.userData.worldX - sonicWX;
+            var tdz = tufo.userData.worldZ - sonicWZ;
+            var td2 = tdx * tdx + tdz * tdz;
+
+            if (td2 > CULL_R2) continue; // culling: fora do alcance visível
+
             // Brisa base (oscilação suave, fase diferente por tufo)
             var brisaX = Math.sin(tempo * 1.8 + tufo.userData.faseBrisa) * 0.07;
             var brisaZ = Math.cos(tempo * 1.3 + tufo.userData.faseBrisa * 0.7) * 0.04;
 
             // Reação à proximidade do Sonic: inclina para longe dele
-            if (posSonicTufo) {
-                var tdx = tufo.position.x - posSonicTufo.x;
-                var tdz = tufo.position.z - posSonicTufo.z;
-                var td2 = tdx * tdx + tdz * tdz;
-                if (td2 < raioSonicRelva * raioSonicRelva) {
-                    var tdist = Math.sqrt(td2) + 0.001;
-                    var forca = (1.0 - tdist / raioSonicRelva) * 0.55;
-                    brisaX += (tdx / tdist) * forca;
-                    brisaZ += (tdz / tdist) * forca;
-                } else {
-                    // Amortece de volta ao neutro quando Sonic se afasta
-                    tufo.rotation.x *= 0.88;
-                    tufo.rotation.z *= 0.88;
-                }
+            if (td2 < raioSonicRelva * raioSonicRelva) {
+                var tdist = Math.sqrt(td2) + 0.001;
+                var forca = (1.0 - tdist / raioSonicRelva) * 0.55;
+                brisaX += (tdx / tdist) * forca;
+                brisaZ += (tdz / tdist) * forca;
+            } else {
+                tufo.rotation.x *= 0.88;
+                tufo.rotation.z *= 0.88;
             }
 
             tufo.rotation.x = brisaX;
@@ -2186,7 +2168,6 @@ function loop() {
 function Start() {
     atualizarDimensoes(); // ajusta câmara ao tamanho real da janela na inicialização
     criarTerreno();
-    criarTufosRelvaNasPlataformas();
     criarSkyboxRetro();
     criarIlhasDistantes();
     criarBarco();
