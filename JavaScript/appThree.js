@@ -22,6 +22,12 @@ var relogio = new THREE.Clock();
 var chao, sol, nuvens = [];
 var aneisDecorativos = [], vegetacao = [], palmeiras = [];
 var sonicPlaceholder, sonicBola, modoBola = false, oceano, espumaOndas = [];
+var sonicEmSalto = false, sonicVelocidadeY = 0;
+var GRAVIDADE = -25, VELOCIDADE_SALTO = 15, CHAO_Y_SONIC = 0.35;
+var sonicVidas = 3, sonicMorreu = false, sonicInvencivel = 0, sonicTempoMorte = 0;
+var ultimoCheckpoint = new THREE.Vector3(0, CHAO_Y_SONIC, 39);
+var modoLoop = false, loopAngulo = 0;
+var LOOP_CZ = -28.75, LOOP_RAIO = 7, LOOP_CY = CHAO_Y_SONIC + 7;
 var ceu, ilhasDistantes = [], barcos = [], gaivotas = [];
 var tufosRelva = [];
 // Passo 3: cache de materials partilhados para folhas de árvores
@@ -97,6 +103,11 @@ var labelVista = document.createElement('div');
 labelVista.style.cssText = 'position:fixed;top:10px;left:10px;background:rgba(0,0,0,0.7);color:#fff;padding:8px 16px;font-family:monospace;font-size:14px;border-radius:6px;z-index:100;pointer-events:none;';
 labelVista.textContent = 'Vista: Vista geral — O/0: side-scroll | C: Follow Sonic | F: câmara livre';
 document.body.appendChild(labelVista);
+
+var labelVidas = document.createElement('div');
+labelVidas.style.cssText = 'position:fixed;top:50px;left:10px;background:rgba(0,0,0,0.7);color:#ff6688;padding:6px 14px;font-family:monospace;font-size:22px;border-radius:6px;z-index:100;pointer-events:none;letter-spacing:4px;';
+labelVidas.textContent = '♥♥♥';
+document.body.appendChild(labelVidas);
 
 function inicializarCameraOrtografica() {
     var largura = window.innerWidth - 15;
@@ -210,12 +221,21 @@ document.addEventListener('keydown', function(evento) {
     }
     // WASD
     if (teclasPremidas.hasOwnProperty(teclaLower)) teclasPremidas[teclaLower] = true;
-    // Sem. 4: alternar modo bola (Espaço) — ignorado em câmara livre
-    if (evento.code === 'Space' && !modoCamaraLivre && sonicPlaceholder && sonicBola) {
-        modoBola = !modoBola;
-        sonicPlaceholder.visible = !modoBola;
-        sonicBola.visible = modoBola;
-        sonicBola.position.copy(sonicPlaceholder.position);
+    // Espaço: salto (ou descolar da bola) — ignorado em câmara livre
+    if (evento.code === 'Space' && !modoCamaraLivre && sonicPlaceholder) {
+        if (modoBola && sonicBola) {
+            // Sair do modo bola
+            modoBola = false;
+            sonicPlaceholder.visible = true;
+            sonicBola.visible = false;
+            sonicPlaceholder.position.x = sonicBola.position.x;
+            sonicPlaceholder.position.z = sonicBola.position.z;
+            sonicPlaceholder.position.y = CHAO_Y_SONIC;
+        } else if (!sonicEmSalto) {
+            // Iniciar salto
+            sonicEmSalto = true;
+            sonicVelocidadeY = VELOCIDADE_SALTO;
+        }
     }
 });
 
@@ -376,21 +396,14 @@ function criarTexturaAreia() {
     return tex;
 }
 
-// --- Sem. 0/1 + Sem. 3: Terreno linear (relva + terra xadrez, z=+35 a -35) ---
-var texturaXadrezPartilhada, materialTerraPartilhado, materialRelvaPartilhado, materialRelvaEscPartilhado;
+// --- Sem. 0/1 + Sem. 3: Terreno linear (terra xadrez) ---
+var texturaXadrezPartilhada, materialTerraPartilhado;
 
 function inicializarMateriaisTerreno() {
     texturaXadrezPartilhada = criarTexturaXadrez();
     materialTerraPartilhado = new THREE.MeshStandardMaterial({
         map: texturaXadrezPartilhada,
         roughness: 0.75
-    });
-    // Sem. 3: textura procedural da relva aplicada via map
-    materialRelvaPartilhado = new THREE.MeshStandardMaterial({
-        map: criarTexturaRelva(), color: 0x39b54a, roughness: 0.65
-    });
-    materialRelvaEscPartilhado = new THREE.MeshStandardMaterial({
-        color: 0x2a7d3a, roughness: 0.7
     });
 }
 
@@ -407,22 +420,7 @@ function criarSegmentoTerreno(x, z, largX, compZ, altura, elevacao, temRelva) {
     grupo.add(terra);
 
     if (temRelva !== false) {
-        var relva = new THREE.Mesh(
-            new THREE.BoxGeometry(largX + 0.3, 0.35, compZ + 0.3),
-            materialRelvaPartilhado
-        );
-        relva.position.y = 0.175;
-        relva.receiveShadow = true;
-        relva.castShadow = true;
-        grupo.add(relva);
-
-        var bordoRelva = new THREE.Mesh(
-            new THREE.BoxGeometry(largX + 0.6, 0.15, compZ + 0.6),
-            materialRelvaEscPartilhado
-        );
-        bordoRelva.position.y = 0.075;
-        bordoRelva.receiveShadow = true;
-        grupo.add(bordoRelva);
+        grupo.add(criarSuperficieRelvaUnificada(x, z, largX, compZ));
     }
 
     grupo.position.set(x, elevacao, z);
@@ -1017,6 +1015,12 @@ function criarLooping() {
         box.setFromObject(loop);
         var centroX = (box.min.x + box.max.x) / 2;
         loop.position.set(-centroX, -box.min.y - 2.3, -28.75);
+
+        // Ajustar LOOP_CY e LOOP_RAIO ao centro real do modelo carregado:
+        // o fundo interno do loop deve coincidir com o chão onde o Sonic entra.
+        box.setFromObject(loop);
+        LOOP_CY = (box.min.y + box.max.y) / 2;
+        LOOP_RAIO = LOOP_CY - CHAO_Y_SONIC;
 
         loop.traverse(function(node) {
             if (node.isMesh) {
@@ -1895,59 +1899,60 @@ function criarFloresChao(x, y, z, numFlores) {
     return grupo;
 }
 
-// --- Tufos de relva 3D (cross-plane cards) espalhados nas plataformas ---
-function criarTufoRelva(x, z) {
-    // Lazy-init: 7 materiais e 3 geometrias partilhados por todos os ~1600 tufos
+// --- Superfície de relva unificada: base sólida + lâminas como filhos ---
+function criarSuperficieRelvaUnificada(terrainX, terrainZ, largX, compZ) {
+    // Lazy-init: materiais e geometrias partilhados por todas as superfícies
     if (!_matsRelvaTufos) {
         _matsRelvaTufos = [0x1a5e1a, 0x1e6b1e, 0x245e24, 0x1c6020, 0x206820, 0x175318, 0x2a6a2a].map(function(cor) {
             return new THREE.MeshBasicMaterial({ color: cor, side: THREE.DoubleSide });
         });
-        _geosRelvaTufo = [0.15, 0.22, 0.33].map(function(h) {
-            var g = new THREE.PlaneGeometry(0.10, h);
-            var p = g.attributes.position;
-            for (var v = 0; v < p.count; v++) p.setY(v, p.getY(v) + h / 2);
-            p.needsUpdate = true;
+        _geosRelvaTufo = [0.18, 0.26, 0.36].map(function(h) {
+            var g = new THREE.PlaneGeometry(0.12, h);
+            var pos = g.attributes.position;
+            for (var v = 0; v < pos.count; v++) pos.setY(v, pos.getY(v) + h / 2);
+            pos.needsUpdate = true;
             return g;
         });
     }
 
-    var mat = _matsRelvaTufos[Math.floor(Math.random() * _matsRelvaTufos.length)];
-    var geo = _geosRelvaTufo[Math.floor(Math.random() * _geosRelvaTufo.length)];
-
     var grupo = new THREE.Group();
-    for (var tc = 0; tc < 2; tc++) {
-        var plano = new THREE.Mesh(geo, mat);
-        plano.rotation.y = tc * Math.PI / 2;
-        grupo.add(plano);
+
+    // Camada base única (substitui relva + bordoRelva)
+    var matBase = new THREE.MeshStandardMaterial({ color: 0x2a7232, roughness: 0.9, metalness: 0.0 });
+    var geoBase = new THREE.BoxGeometry(largX + 0.5, 0.20, compZ + 0.5);
+    var base = new THREE.Mesh(geoBase, matBase);
+    base.position.y = 0.10;
+    base.receiveShadow = true;
+    grupo.add(base);
+
+    // Lâminas densas como filhos do grupo (coordenadas locais ao segmento)
+    var num = Math.floor(largX * compZ * 3.0);
+    for (var i = 0; i < num; i++) {
+        var lx = (Math.random() - 0.5) * largX;
+        var lz = (Math.random() - 0.5) * compZ;
+
+        var tufo = new THREE.Group();
+        var nPlanos = Math.random() < 0.5 ? 2 : 3;
+        var mat = _matsRelvaTufos[Math.floor(Math.random() * _matsRelvaTufos.length)];
+        var geo = _geosRelvaTufo[Math.floor(Math.random() * _geosRelvaTufo.length)];
+        for (var p = 0; p < nPlanos; p++) {
+            var plano = new THREE.Mesh(geo, mat);
+            plano.rotation.y = (p * Math.PI) / nPlanos;
+            tufo.add(plano);
+        }
+
+        tufo.position.set(lx, 0.20, lz);
+        tufo.rotation.y = Math.random() * Math.PI;
+        tufo.userData.faseBrisa = Math.random() * Math.PI * 2;
+        tufo.userData.worldX = terrainX + lx;
+        tufo.userData.worldZ = terrainZ + lz;
+
+        grupo.add(tufo);
+        tufosRelva.push(tufo);
     }
 
-    grupo.position.set(x, 0.375, z);
-    grupo.rotation.y = Math.random() * Math.PI;
-    grupo.userData.faseBrisa = Math.random() * Math.PI * 2;
-
-    tufosRelva.push(grupo);
-    cena.add(grupo);
+    console.log('[Relva] segmento (' + terrainX + ',' + terrainZ + ') — ' + num + ' lâminas, total ' + tufosRelva.length);
     return grupo;
-}
-
-function criarTufosRelvaNasPlataformas() {
-    // Dimensões ligeiramente menores que as plataformas para não ficar nas bordas
-    var plats = [
-        { cx: 0, cz:  27.5, lx: 10, lz: 22 },
-        { cx: 0, cz:  -7.5, lx: 10, lz: 22 },
-        { cx: 0, cz: -40.0, lx: 10, lz: 17 },
-        { cx: 0, cz: -67.5, lx: 10, lz: 22 }
-    ];
-    var densidade = 2.0; // tufos/m²  (~1600 tufos total)
-    plats.forEach(function(p) {
-        var num = Math.floor(p.lx * p.lz * densidade);
-        for (var ti = 0; ti < num; ti++) {
-            var tx = p.cx + (Math.random() - 0.5) * p.lx;
-            var tz = p.cz + (Math.random() - 0.5) * p.lz;
-            criarTufoRelva(tx, tz);
-        }
-    });
-    console.log('[Relva] ' + tufosRelva.length + ' tufos criados');
 }
 
 // Placa final (Goal Post): poste + placa rotativa
@@ -2068,8 +2073,8 @@ function criarElementosNivel() {
 
     // ── Plataforma 3 (z=-36 a z=-56) ────────────────────────────
     // Obstáculo 4: Picos com mola centrada
-    criarPicos(0, y, -43, { largura: 10, numPicos: 14 });
-    criarMola(0, y, -43);
+    criarPicos(0, y, -50, { largura: 10, numPicos: 14 });
+    criarMola(0, y, -50);
 
     // ── Espaço 3 (z=-56 a z=-61): ponte de ligação Plat3→Plat4 ──
     criarPonte(0, 0.35, -61, 5, 5, 10);
@@ -2117,6 +2122,45 @@ function atualizarDimensoes() {
     }
 }
 
+// --- Sistema de vidas ---
+function atualizarHUD() {
+    var s = '';
+    for (var i = 0; i < 3; i++) s += i < sonicVidas ? '♥' : '♡';
+    labelVidas.textContent = s;
+}
+
+function sonicMorrer() {
+    if (sonicMorreu || sonicInvencivel > 0) return;
+    sonicVidas--;
+    sonicMorreu = true;
+    sonicEmSalto = false;
+    modoLoop = false;
+    loopAngulo = 0;
+    sonicVelocidadeY = 7;
+    sonicTempoMorte = 1.8;
+    modoBola = false;
+    if (sonicBola) sonicBola.visible = false;
+    sonicPlaceholder.visible = true;
+    atualizarHUD();
+}
+
+function sonicRespawn() {
+    sonicMorreu = false;
+    sonicEmSalto = false;
+    sonicVelocidadeY = 0;
+    modoBola = false;
+    sonicPlaceholder.rotation.z = 0;
+    sonicPlaceholder.visible = true;
+    if (sonicBola) sonicBola.visible = false;
+    sonicInvencivel = 2.0;
+    if (sonicVidas <= 0) {
+        sonicVidas = 3;
+        ultimoCheckpoint.set(0, CHAO_Y_SONIC, 39);
+        atualizarHUD();
+    }
+    sonicPlaceholder.position.copy(ultimoCheckpoint);
+}
+
 // --- Sem. 0/1 + Sem. 2 + Sem. 4: Loop principal (animações + render) ---
 function loop() {
     var delta = relogio.getDelta();
@@ -2140,29 +2184,117 @@ function loop() {
         camaraPerspetiva.lookAt(_vCamLookAt);
     }
 
+    // --- Animação de morte (bounce + spin) ---
+    if (sonicMorreu && sonicPlaceholder) {
+        sonicTempoMorte -= delta;
+        sonicVelocidadeY += GRAVIDADE * delta;
+        sonicPlaceholder.position.y += sonicVelocidadeY * delta;
+        sonicPlaceholder.rotation.z += delta * 6;
+        if (sonicTempoMorte <= 0) sonicRespawn();
+    }
+
+    // --- Piscar durante invencibilidade ---
+    if (sonicInvencivel > 0) {
+        sonicInvencivel -= delta;
+        var piscar = Math.floor(sonicInvencivel * 8) % 2 === 0;
+        sonicPlaceholder.visible = !modoBola ? piscar : false;
+        if (sonicBola) sonicBola.visible = modoBola ? piscar : false;
+        if (sonicInvencivel <= 0) {
+            sonicPlaceholder.visible = !modoBola;
+            if (sonicBola) sonicBola.visible = modoBola;
+        }
+    }
+
+    // --- Trigger do loop ---
+    if (!modoLoop && !sonicMorreu && !sonicEmSalto && sonicPlaceholder) {
+        var pz = sonicPlaceholder.position.z;
+        var py = sonicPlaceholder.position.y;
+        if (pz <= LOOP_CZ + 1.0 && pz > LOOP_CZ - 2.0 && Math.abs(py - CHAO_Y_SONIC) < 0.5) {
+            modoLoop = true;
+            loopAngulo = 0;
+            modoBola = false;
+            sonicPlaceholder.visible = true;
+            if (sonicBola) sonicBola.visible = false;
+        }
+    }
+
+    // --- Física do loop (movimento circular automático) ---
+    if (modoLoop && sonicPlaceholder && !sonicMorreu) {
+        var velAng = 1.8 + (teclasPremidas.w ? 0.5 : 0);
+        loopAngulo += velAng * delta;
+
+        sonicPlaceholder.position.z = LOOP_CZ - LOOP_RAIO * Math.sin(loopAngulo);
+        sonicPlaceholder.position.y = LOOP_CY - LOOP_RAIO * Math.cos(loopAngulo);
+        sonicPlaceholder.position.x *= 0.9; // centrar suavemente em X
+        sonicPlaceholder.rotation.x = loopAngulo;
+        sonicPlaceholder.rotation.z = 0;
+
+        if (sonicBola) sonicBola.position.copy(sonicPlaceholder.position);
+
+        if (loopAngulo >= Math.PI * 2) {
+            modoLoop = false;
+            loopAngulo = 0;
+            sonicPlaceholder.position.z = LOOP_CZ - 1.5;
+            sonicPlaceholder.position.y = CHAO_Y_SONIC;
+            sonicPlaceholder.rotation.x = 0;
+        }
+    }
+
     // --- Animação dos membros do Sonic (pivot nos ombros e ancas) ---
-    if (!modoBola &&
+    if (!modoBola && !sonicMorreu && !modoLoop &&
         sonicPartes.pivBracoEsq && sonicPartes.pivBracoDir &&
         sonicPartes.pivPernaEsq && sonicPartes.pivPernaDir) {
-        var fase = tempo * 8;
-        if (sonicEmMovimento) {
-            sonicPartes.pivBracoEsq.rotation.x =  Math.sin(fase) * 0.7;
-            sonicPartes.pivBracoDir.rotation.x = -Math.sin(fase) * 0.7;
-            sonicPartes.pivPernaEsq.rotation.x =  Math.sin(fase) * 0.9;
-            sonicPartes.pivPernaDir.rotation.x = -Math.sin(fase) * 0.9;
-            sonicPlaceholder.position.y = 0.35 + Math.abs(Math.sin(fase)) * 0.07;
+        if (sonicEmSalto) {
+            // Pose de salto: braços levantados, pernas recolhidas
+            sonicPartes.pivBracoEsq.rotation.x = -1.0;
+            sonicPartes.pivBracoDir.rotation.x = -1.0;
+            sonicPartes.pivPernaEsq.rotation.x =  0.6;
+            sonicPartes.pivPernaDir.rotation.x =  0.6;
+            // Y controlado pela física do salto — não sobrepor aqui
         } else {
-            sonicPartes.pivBracoEsq.rotation.x = 0;
-            sonicPartes.pivBracoDir.rotation.x = 0;
-            sonicPartes.pivPernaEsq.rotation.x = 0;
-            sonicPartes.pivPernaDir.rotation.x = 0;
-            sonicPlaceholder.position.y = 0.35;
+            var fase = tempo * 8;
+            if (sonicEmMovimento) {
+                sonicPartes.pivBracoEsq.rotation.x =  Math.sin(fase) * 0.7;
+                sonicPartes.pivBracoDir.rotation.x = -Math.sin(fase) * 0.7;
+                sonicPartes.pivPernaEsq.rotation.x =  Math.sin(fase) * 0.9;
+                sonicPartes.pivPernaDir.rotation.x = -Math.sin(fase) * 0.9;
+                sonicPlaceholder.position.y = CHAO_Y_SONIC + Math.abs(Math.sin(fase)) * 0.07;
+            } else {
+                sonicPartes.pivBracoEsq.rotation.x = 0;
+                sonicPartes.pivBracoDir.rotation.x = 0;
+                sonicPartes.pivPernaEsq.rotation.x = 0;
+                sonicPartes.pivPernaDir.rotation.x = 0;
+                sonicPlaceholder.position.y = CHAO_Y_SONIC;
+            }
         }
     }
 
 
-    // --- Sem. 4: Movimento do Sonic com WASD (bloqueado em câmara livre) ---
-    if (sonicPlaceholder && !modoCamaraLivre) {
+    // --- Física do salto ---
+    if (sonicEmSalto && sonicPlaceholder && !modoBola && !sonicMorreu && !modoLoop) {
+        sonicVelocidadeY += GRAVIDADE * delta;
+        sonicPlaceholder.position.y += sonicVelocidadeY * delta;
+        if (sonicPlaceholder.position.y <= CHAO_Y_SONIC) {
+            sonicPlaceholder.position.y = CHAO_Y_SONIC;
+            sonicVelocidadeY = 0;
+            sonicEmSalto = false;
+            // Aterrou → transformar em bola
+            modoBola = true;
+            sonicPlaceholder.visible = false;
+            if (sonicBola) {
+                var raio = sonicBola.userData.raio || 0.7;
+                sonicBola.position.set(
+                    sonicPlaceholder.position.x,
+                    CHAO_Y_SONIC + raio,
+                    sonicPlaceholder.position.z
+                );
+                sonicBola.visible = true;
+            }
+        }
+    }
+
+    // --- Sem. 4: Movimento do Sonic com WASD (bloqueado em câmara livre, morte e loop) ---
+    if (sonicPlaceholder && !modoCamaraLivre && !sonicMorreu && !modoLoop) {
         var vel = 8 * delta;
         var movX = 0, movZ = 0;
         // Ajuste side-scroll: inverter W/S no modo ortográfico
@@ -2176,7 +2308,7 @@ function loop() {
         if (teclasPremidas.a) movX -= vel;
         if (teclasPremidas.d) movX += vel;
 
-        var estaAMover = (movX !== 0 || movZ !== 0) && !modoBola;
+        var estaAMover = (movX !== 0 || movZ !== 0) && !modoBola && !sonicEmSalto;
         if (estaAMover !== sonicEmMovimento) {
             sonicEmMovimento = estaAMover;
             tocarAnimacaoSonic(estaAMover ? 'run' : 'idle');
@@ -2204,6 +2336,33 @@ function loop() {
                 }
             } else {
                 sonicPlaceholder.rotation.y = Math.atan2(movX, movZ);
+            }
+        }
+    }
+
+    // --- Deteção de colisão com picos ---
+    if (!sonicMorreu && !modoLoop && sonicInvencivel <= 0 && sonicPlaceholder) {
+        var alvoCol = (modoBola && sonicBola) ? sonicBola : sonicPlaceholder;
+        var sonicBox = new THREE.Box3().setFromObject(alvoCol);
+        for (var ci = 0; ci < areasColisao.length; ci++) {
+            areasColisao[ci].updateMatrixWorld(true);
+            if (sonicBox.intersectsBox(new THREE.Box3().setFromObject(areasColisao[ci]))) {
+                sonicMorrer();
+                break;
+            }
+        }
+    }
+
+    // --- Ativar checkpoints (Sonic aproxima-se) ---
+    if (!sonicMorreu && sonicPlaceholder) {
+        var sx = sonicPlaceholder.position.x, sz = sonicPlaceholder.position.z;
+        for (var ck = 0; ck < elementosNivel.length; ck++) {
+            var el = elementosNivel[ck];
+            if (el.tipo !== 'checkpoint') continue;
+            var ep = el.grupo.position;
+            var dist2 = (sx - ep.x) * (sx - ep.x) + (sz - ep.z) * (sz - ep.z);
+            if (dist2 < 9 && ep.z < ultimoCheckpoint.z) {
+                ultimoCheckpoint.set(ep.x, CHAO_Y_SONIC, ep.z);
             }
         }
     }
@@ -2286,27 +2445,30 @@ function loop() {
     if (tufosRelva.length > 0) {
         var posSonicTufo = sonicPlaceholder ? sonicPlaceholder.position : null;
         var raioSonicRelva = 2.8;
+        var sonicWX = posSonicTufo ? posSonicTufo.x : 0;
+        var sonicWZ = posSonicTufo ? posSonicTufo.z : 0;
+        var CULL_R2 = 35 * 35; // ignora tufos a mais de 35u do Sonic
         for (var tr = 0; tr < tufosRelva.length; tr++) {
             var tufo = tufosRelva[tr];
+            var tdx = tufo.userData.worldX - sonicWX;
+            var tdz = tufo.userData.worldZ - sonicWZ;
+            var td2 = tdx * tdx + tdz * tdz;
+
+            if (td2 > CULL_R2) continue; // culling: fora do alcance visível
+
             // Brisa base (oscilação suave, fase diferente por tufo)
             var brisaX = Math.sin(tempo * 1.8 + tufo.userData.faseBrisa) * 0.07;
             var brisaZ = Math.cos(tempo * 1.3 + tufo.userData.faseBrisa * 0.7) * 0.04;
 
             // Reação à proximidade do Sonic: inclina para longe dele
-            if (posSonicTufo) {
-                var tdx = tufo.position.x - posSonicTufo.x;
-                var tdz = tufo.position.z - posSonicTufo.z;
-                var td2 = tdx * tdx + tdz * tdz;
-                if (td2 < raioSonicRelva * raioSonicRelva) {
-                    var tdist = Math.sqrt(td2) + 0.001;
-                    var forca = (1.0 - tdist / raioSonicRelva) * 0.55;
-                    brisaX += (tdx / tdist) * forca;
-                    brisaZ += (tdz / tdist) * forca;
-                } else {
-                    // Amortece de volta ao neutro quando Sonic se afasta
-                    tufo.rotation.x *= 0.88;
-                    tufo.rotation.z *= 0.88;
-                }
+            if (td2 < raioSonicRelva * raioSonicRelva) {
+                var tdist = Math.sqrt(td2) + 0.001;
+                var forca = (1.0 - tdist / raioSonicRelva) * 0.55;
+                brisaX += (tdx / tdist) * forca;
+                brisaZ += (tdz / tdist) * forca;
+            } else {
+                tufo.rotation.x *= 0.88;
+                tufo.rotation.z *= 0.88;
             }
 
             tufo.rotation.x = brisaX;
@@ -2351,7 +2513,6 @@ function loop() {
 function Start() {
     atualizarDimensoes(); // ajusta câmara ao tamanho real da janela na inicialização
     criarTerreno();
-    criarTufosRelvaNasPlataformas();
     criarSkyboxRetro();
     criarIlhasDistantes();
     criarBarco();
