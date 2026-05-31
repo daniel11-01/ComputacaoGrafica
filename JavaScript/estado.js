@@ -87,8 +87,12 @@ export var estado = {
     elementosNivel:     [],
     areasColisao:       [],
 
+    // --- Anéis coletados ---
+    aneisColecionados: 0,
+
     // --- Callbacks (evita importação cruzada entre módulos) ---
     _callbacks: {
-        sonicMorrer: null,  // registado por interatividade.js; chamado por finalizacao.js
+        sonicMorrer:        null,   // registado por interatividade.js; chamado por finalizacao.js
+        atualizarHUDAneis:  null,   // registado por interatividade.js; chamado por finalizacao.js
     }
 };

@@ -5,8 +5,9 @@ import { estado } from './estado.js';
 
 var carregadorGLTF = new GLTFLoader();
 
-// labelVidas é privado a este módulo
+// labelVidas e labelAneis são privados a este módulo
 var labelVidas;
+var labelAneis;
 
 var SONIC_PIVOT = {
     ombroEsq:   new THREE.Vector3(-0.28, 0.65, 0.0),
@@ -25,11 +26,18 @@ export function inicializarInteratividade() {
     labelVidas.textContent = '♥♥♥';
     document.body.appendChild(labelVidas);
 
+    // HUD de anéis
+    labelAneis = document.createElement('div');
+    labelAneis.style.cssText = 'position:fixed;top:90px;left:10px;background:rgba(0,0,0,0.7);color:#ffdd00;padding:6px 14px;font-family:monospace;font-size:20px;border-radius:6px;z-index:100;pointer-events:none;';
+    labelAneis.textContent = '⬡ 0';
+    document.body.appendChild(labelAneis);
+
     // Checkpoint inicial
     estado.ultimoCheckpoint = new THREE.Vector3(0, estado.CHAO_Y_SONIC, 39);
 
-    // Registar callback de morte (chamado por finalizacao.js sem importar este módulo)
-    estado._callbacks.sonicMorrer = function() { _sonicMorrer(); };
+    // Registar callbacks
+    estado._callbacks.sonicMorrer       = function() { _sonicMorrer(); };
+    estado._callbacks.atualizarHUDAneis = function() { _atualizarHUDAneis(); };
 
     // Teclado: WASD + Espaço
     document.addEventListener('keydown', function(evento) {
@@ -228,6 +236,11 @@ function _atualizarHUD() {
     var s = '';
     for (var i = 0; i < 3; i++) s += i < estado.sonicVidas ? '♥' : '♡';
     labelVidas.textContent = s;
+}
+
+function _atualizarHUDAneis() {
+    if (!labelAneis) return;
+    labelAneis.textContent = '⬡ ' + estado.aneisColecionados;
 }
 
 function _sonicMorrer() {

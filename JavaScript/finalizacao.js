@@ -58,7 +58,7 @@ export function criarCheckpoint(x, y, z) {
     grupo.add(basePoste);
 
     grupo.position.set(x, y, z);
-    estado.elementosNivel.push({ grupo: grupo, tipo: 'checkpoint' });
+    estado.elementosNivel.push({ grupo: grupo, tipo: 'checkpoint', material: materialTopo, ativado: false });
     estado.cena.add(grupo);
     return grupo;
 }
@@ -354,6 +354,23 @@ export function atualizarFinalizacao(delta) {
         }
     }
 
+    // Coletar anéis
+    if (!estado.sonicMorreu && estado.aneisDecorativos.length > 0) {
+        var sp = estado.sonicPlaceholder.position;
+        for (var ai = estado.aneisDecorativos.length - 1; ai >= 0; ai--) {
+            var anel = estado.aneisDecorativos[ai];
+            var adx = sp.x - anel.position.x;
+            var ady = sp.y - anel.position.y;
+            var adz = sp.z - anel.position.z;
+            if (adx * adx + ady * ady + adz * adz < 4.0) {
+                estado.cena.remove(anel);
+                estado.aneisDecorativos.splice(ai, 1);
+                estado.aneisColecionados++;
+                if (estado._callbacks.atualizarHUDAneis) estado._callbacks.atualizarHUDAneis();
+            }
+        }
+    }
+
     // Ativar checkpoints por proximidade
     if (!estado.sonicMorreu) {
         var sx = estado.sonicPlaceholder.position.x;
@@ -363,6 +380,12 @@ export function atualizarFinalizacao(delta) {
             if (el.tipo !== 'checkpoint') continue;
             var ep = el.grupo.position;
             var dist2 = (sx - ep.x) * (sx - ep.x) + (sz - ep.z) * (sz - ep.z);
+            if (dist2 < 9 && !el.ativado) {
+                el.ativado = true;
+                el.material.color.setHex(0x88ddff);
+                el.material.emissive.setHex(0x44aaee);
+                el.material.emissiveIntensity = 0.5;
+            }
             if (dist2 < 9 && ep.z < estado.ultimoCheckpoint.z) {
                 estado.ultimoCheckpoint.set(ep.x, estado.CHAO_Y_SONIC, ep.z);
             }
