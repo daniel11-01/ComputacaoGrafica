@@ -23,6 +23,9 @@ import { inicializarInteratividade, criarSonicPlaceholder, atualizarInterativida
 // Objetivo 7 — Finalização
 import { criarElementosNivel, atualizarFinalizacao } from './finalizacao.js';
 
+// Sistema de jogo — Timer, Anéis, Resultados, CSV
+import { inicializarSistema, atualizarSistema } from './sistema.js';
+
 // --- Resize responsivo ---
 window.addEventListener('resize', function() { estado._needsResize = true; });
 
@@ -51,6 +54,7 @@ function Start() {
     // 3. Entidade jogável
     inicializarInteratividade();    // HUD de vidas + input WASD/Espaço + callback de morte
     criarSonicPlaceholder();        // Sonic GLB (async — não bloqueia)
+    inicializarSistema();           // Timer HUD + ring tracker (anéis têm de existir antes)
 
     // 4. Render inicial + loop
     _atualizarDimensoes();
@@ -70,9 +74,12 @@ function _loop() {
     }
 
     // Atualização de cada módulo por ordem determinística
+    atualizarSistema(delta);                    // timer + ring collection + goal detection
     atualizarCamaras(delta);                    // câmara livre + follow Sonic
-    atualizarInteratividade(delta, tempo);      // física, movimento, animação do Sonic
-    atualizarFinalizacao(delta);                // colisões + checkpoints
+    if (!estado.nivelConcluido) {
+        atualizarInteratividade(delta, tempo);  // física, movimento, animação do Sonic
+        atualizarFinalizacao(delta);            // colisões + checkpoints
+    }
     atualizarObjetosComplexos(delta, tempo);    // anéis, barcos, gaivotas, vegetação
     atualizarAmbiente(delta, tempo);            // nuvens, ondas do oceano
 

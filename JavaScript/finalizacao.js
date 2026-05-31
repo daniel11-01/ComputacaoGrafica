@@ -354,23 +354,6 @@ export function atualizarFinalizacao(delta) {
         }
     }
 
-    // Coletar anéis
-    if (!estado.sonicMorreu && estado.aneisDecorativos.length > 0) {
-        var sp = estado.sonicPlaceholder.position;
-        for (var ai = estado.aneisDecorativos.length - 1; ai >= 0; ai--) {
-            var anel = estado.aneisDecorativos[ai];
-            var adx = sp.x - anel.position.x;
-            var ady = sp.y - anel.position.y;
-            var adz = sp.z - anel.position.z;
-            if (adx * adx + ady * ady + adz * adz < 4.0) {
-                estado.cena.remove(anel);
-                estado.aneisDecorativos.splice(ai, 1);
-                estado.aneisColecionados++;
-                if (estado._callbacks.atualizarHUDAneis) estado._callbacks.atualizarHUDAneis();
-            }
-        }
-    }
-
     // Ativar checkpoints por proximidade
     if (!estado.sonicMorreu) {
         var sx = estado.sonicPlaceholder.position.x;

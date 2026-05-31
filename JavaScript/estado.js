@@ -87,12 +87,15 @@ export var estado = {
     elementosNivel:     [],
     areasColisao:       [],
 
-    // --- Anéis coletados ---
+    // --- Sistema de jogo (timer + rings + resultados) ---
     aneisColecionados: 0,
+    tempoNivel:        0,
+    nivelAtivo:        true,
+    nivelConcluido:    false,
 
     // --- Callbacks (evita importação cruzada entre módulos) ---
     _callbacks: {
-        sonicMorrer:        null,   // registado por interatividade.js; chamado por finalizacao.js
-        atualizarHUDAneis:  null,   // registado por interatividade.js; chamado por finalizacao.js
+        sonicMorrer:    null,   // registado por interatividade.js; chamado por finalizacao.js
+        resetarHUDAneis: null,  // registado por sistema.js; chamado por interatividade.js no game-over
     }
 };

@@ -5,9 +5,8 @@ import { estado } from './estado.js';
 
 var carregadorGLTF = new GLTFLoader();
 
-// labelVidas e labelAneis são privados a este módulo
+// labelVidas é privado a este módulo
 var labelVidas;
-var labelAneis;
 
 var SONIC_PIVOT = {
     ombroEsq:   new THREE.Vector3(-0.28, 0.65, 0.0),
@@ -26,18 +25,11 @@ export function inicializarInteratividade() {
     labelVidas.textContent = '♥♥♥';
     document.body.appendChild(labelVidas);
 
-    // HUD de anéis
-    labelAneis = document.createElement('div');
-    labelAneis.style.cssText = 'position:fixed;top:90px;left:10px;background:rgba(0,0,0,0.7);color:#ffdd00;padding:6px 14px;font-family:monospace;font-size:20px;border-radius:6px;z-index:100;pointer-events:none;';
-    labelAneis.textContent = '⬡ 0';
-    document.body.appendChild(labelAneis);
-
     // Checkpoint inicial
     estado.ultimoCheckpoint = new THREE.Vector3(0, estado.CHAO_Y_SONIC, 39);
 
     // Registar callbacks
-    estado._callbacks.sonicMorrer       = function() { _sonicMorrer(); };
-    estado._callbacks.atualizarHUDAneis = function() { _atualizarHUDAneis(); };
+    estado._callbacks.sonicMorrer = function() { _sonicMorrer(); };
 
     // Teclado: WASD + Espaço
     document.addEventListener('keydown', function(evento) {
@@ -238,11 +230,6 @@ function _atualizarHUD() {
     labelVidas.textContent = s;
 }
 
-function _atualizarHUDAneis() {
-    if (!labelAneis) return;
-    labelAneis.textContent = '⬡ ' + estado.aneisColecionados;
-}
-
 function _sonicMorrer() {
     if (estado.sonicMorreu || estado.sonicInvencivel > 0) return;
     estado.sonicVidas--;
@@ -250,8 +237,8 @@ function _sonicMorrer() {
     estado.sonicEmSalto = false;
     estado.modoLoop = false;
     estado.loopAngulo = 0;
-    estado.sonicVelocidadeY = 7;
-    estado.sonicTempoMorte = 1.8;
+    estado.sonicVelocidadeY = 0;
+    estado.sonicTempoMorte = 2.0;
     estado.modoBola = false;
     if (estado.sonicBola) estado.sonicBola.visible = false;
     estado.sonicPlaceholder.visible = true;
@@ -263,13 +250,20 @@ function _sonicRespawn() {
     estado.sonicEmSalto = false;
     estado.sonicVelocidadeY = 0;
     estado.modoBola = false;
-    estado.sonicPlaceholder.rotation.z = 0;
+    estado.sonicPlaceholder.rotation.set(0, 0, 0);
     estado.sonicPlaceholder.visible = true;
     if (estado.sonicBola) estado.sonicBola.visible = false;
     estado.sonicInvencivel = 2.0;
     if (estado.sonicVidas <= 0) {
         estado.sonicVidas = 3;
         estado.ultimoCheckpoint.set(0, estado.CHAO_Y_SONIC, 39);
+        // Reset completo dos anéis — reaparecem todos, contador a zero
+        for (var ri = 0; ri < estado.aneisDecorativos.length; ri++) {
+            estado.aneisDecorativos[ri].userData.coletado = false;
+            estado.aneisDecorativos[ri].visible = true;
+        }
+        estado.aneisColecionados = 0;
+        if (estado._callbacks.resetarHUDAneis) estado._callbacks.resetarHUDAneis();
         _atualizarHUD();
     }
     estado.sonicPlaceholder.position.copy(estado.ultimoCheckpoint);
@@ -279,14 +273,30 @@ function _sonicRespawn() {
 // Atualização por frame: toda a lógica de jogo do Sonic
 // ============================================================
 export function atualizarInteratividade(delta, tempo) {
-    // Animação de morte (bounce + spin)
+    // Animação de morte — cai e fica deitado no chão
     if (estado.sonicMorreu && estado.sonicPlaceholder) {
         estado.sonicTempoMorte -= delta;
-        estado.sonicVelocidadeY += estado.GRAVIDADE * delta;
-        estado.sonicPlaceholder.position.y += estado.sonicVelocidadeY * delta;
-        estado.sonicPlaceholder.rotation.z += delta * 6;
+
+        if (estado.sonicPlaceholder.position.y > estado.CHAO_Y_SONIC) {
+            // Queda com gravidade
+            estado.sonicVelocidadeY += estado.GRAVIDADE * delta;
+            estado.sonicPlaceholder.position.y += estado.sonicVelocidadeY * delta;
+            if (estado.sonicPlaceholder.position.y <= estado.CHAO_Y_SONIC) {
+                estado.sonicPlaceholder.position.y = estado.CHAO_Y_SONIC;
+                estado.sonicVelocidadeY = 0;
+            }
+        } else {
+            // No chão: inclinar devagar para ficar deitado (rotation.x → 90°)
+            if (estado.sonicPlaceholder.rotation.x < Math.PI / 2) {
+                estado.sonicPlaceholder.rotation.x = Math.min(
+                    Math.PI / 2,
+                    estado.sonicPlaceholder.rotation.x + delta * 4
+                );
+            }
+        }
+
         if (estado.sonicTempoMorte <= 0) _sonicRespawn();
-        return; // salta restante lógica durante a morte
+        return;
     }
 
     // Piscar durante invencibilidade
