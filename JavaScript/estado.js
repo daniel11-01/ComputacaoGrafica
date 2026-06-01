@@ -24,6 +24,9 @@ export var estado = {
     _vCamLookAt:        null,
     _vAlvoSeguir:       null,
 
+    // --- Iluminação (Objetivo 5) ---
+    luzes: { ambiente: null, direcional: null, pontual: null },
+
     // --- Cenário (Objetivo 1) ---
     sol:            null,
     nuvens:         [],

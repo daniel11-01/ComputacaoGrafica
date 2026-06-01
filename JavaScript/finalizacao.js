@@ -123,7 +123,7 @@ export function criarPonte(x, y, z, comprimento, numTabuas, largura) {
     }
 
     grupo.position.set(x, y, z);
-    estado.elementosNivel.push({ grupo: grupo, tipo: 'ponte' });
+    estado.elementosNivel.push({ grupo: grupo, tipo: 'ponte', zMin: z, zMax: z + comprimento, largura: largura });
     estado.cena.add(grupo);
     return grupo;
 }
@@ -333,6 +333,7 @@ export function criarElementosNivel() {
 // Boxes pré-alocados para colisão (evita GC por frame)
 var _sonicBox   = new THREE.Box3();
 var _colisorBox = new THREE.Box3();
+var _tempoPonte = 0;
 
 // ============================================================
 // Atualização por frame: colisão com picos + checkpoints
@@ -354,10 +355,23 @@ export function atualizarFinalizacao(delta) {
         }
     }
 
+    // Abanar pontes quando o Sonic passa por cima
+    _tempoPonte += delta;
+    var sx = estado.sonicPlaceholder.position.x;
+    var sz = estado.sonicPlaceholder.position.z;
+    for (var bi = 0; bi < estado.elementosNivel.length; bi++) {
+        var bp = estado.elementosNivel[bi];
+        if (bp.tipo !== 'ponte') continue;
+        var emCima = sz >= bp.zMin && sz <= bp.zMax && Math.abs(sx - bp.grupo.position.x) <= bp.largura / 2;
+        if (emCima) {
+            bp.grupo.rotation.z = Math.sin(_tempoPonte * 3.5) * 0.04;
+        } else {
+            bp.grupo.rotation.z *= 0.85;
+        }
+    }
+
     // Ativar checkpoints por proximidade
     if (!estado.sonicMorreu) {
-        var sx = estado.sonicPlaceholder.position.x;
-        var sz = estado.sonicPlaceholder.position.z;
         for (var ck = 0; ck < estado.elementosNivel.length; ck++) {
             var el = estado.elementosNivel[ck];
             if (el.tipo !== 'checkpoint') continue;
